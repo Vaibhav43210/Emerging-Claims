@@ -25,7 +25,7 @@ if not api_key:
 headers = {"Authorization": f"Bearer {api_key}"}
 
 # Candidate labels
-candidate_labels = ["Cyber", "Water", "Professional Negligence", "Injured/Illness", "Malicious Damage"]
+candidate_labels = ["Cyber", "Water", "Professional Negligence", "Injured/Illness", "Malicious Damage", "Fire"]
 
 # Query function
 def query_model(text, retries=2, timeout=60):
