@@ -9,8 +9,10 @@ st.set_page_config(layout="wide")
 
 # Sidebar: Model selection
 model_options = {
-    "Fast (DistilBART)": "valhalla/distilbart-mnli-12-3",
-    "Accurate (BART Large)": "facebook/bart-large-mnli"
+    "Fast (DistilBART)": "valhalla/distilbart-mnli-12-3", 
+    "Accurate (DeBERTa)": "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli",
+    "Multilingual (XLM-RoBERTa)": "joeddav/xlm-roberta-large-xnli"
+
 }
 selected_model = st.sidebar.selectbox("Select NLP Model", list(model_options.keys()))
 API_URL = f"https://api-inference.huggingface.co/models/{model_options[selected_model]}"
