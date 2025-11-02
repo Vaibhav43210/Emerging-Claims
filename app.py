@@ -27,8 +27,38 @@ headers = {"Authorization": f"Bearer {api_key}"}
 # Candidate labels
 candidate_labels = ["Cyber", "Water", "Professional Negligence", "Injured/Illness", "Malicious Damage", "Fire"]
 
+# Human-readable currency/count formatter
+def human_currency(n):
+    if n is None or (isinstance(n, float) and pd.isna(n)):
+        return "N/A"
+    try:
+        n = float(n)
+    except Exception:
+        return str(n)
+    abs_n = abs(n)
+    if abs_n >= 1_000_000:
+        return f"${n/1_000_000:.2f}M"
+    if abs_n >= 1_000:
+        return f"${n/1_000:.2f}K"
+    return f"${n:,.2f}"
+
+def human_count(n):
+    if n is None:
+        return "0"
+    try:
+        n = float(n)
+    except Exception:
+        return str(n)
+    abs_n = abs(n)
+    if abs_n >= 1_000_000:
+        return f"{n/1_000_000:.2f}M"
+    if abs_n >= 1_000:
+        return f"{n/1_000:.2f}K"
+    # integer if small
+    return f"{int(n)}"
+
 # Query function
-def query_model(text, retries=2, timeout=60):
+def query_model(text, retries=2, timeout=90):
     payload = {"inputs": text, "parameters": {"candidate_labels": candidate_labels}}
     for attempt in range(retries + 1):
         try:
@@ -52,7 +82,7 @@ def query_model(text, retries=2, timeout=60):
 # Streamlit app setup
 
 st.title("Emerging Risk Intelligence Engine")
-tabs = st.tabs(["Data Load", "NLP Inference", "Aggregation", "Emerging Risk Engine", "Visualization", "Insights"])
+tabs = st.tabs(["Data Load", "NLP Inference", "Risk Analysis", "Dimensional YOY Comparison", "Newsletter Insights"])
 
 # Tab 1: Data Load
 with tabs[0]:
@@ -100,56 +130,343 @@ with tabs[1]:
     else:
         st.warning("Please upload data in Tab 1")
 
-# Tab 3: Aggregation
+
+# Tab 3: Risk Analysis (Merged)
 with tabs[2]:
-    if "result_df" in st.session_state:
-        result_df = st.session_state.result_df
-        agg_df = result_df.groupby("Emerging_Risk_Category").agg({"Claim_ID": "count", "Confidence_Score": "mean"}).reset_index()
-        agg_df.columns = ["Emerging_Risk_Category", "Claim_Count", "Avg_Confidence"]
-        st.write("### Aggregated Risk Summary")
-        st.dataframe(agg_df)
-        st.download_button("Download Aggregated Summary", agg_df.to_csv(index=False), "aggregated_risks.csv")
-    else:
-        st.warning("Run NLP Inference in Tab 2")
+    if "df" in st.session_state:
+        df = st.session_state.df
 
-# Tab 4: Emerging Risk Engine
+        # If NLP results exist from Tab 2, merge Emerging Risk Category & Confidence
+        if "result_df" in st.session_state:
+            res_df = st.session_state.result_df[['Claim_ID', 'Emerging_Risk_Category', 'Confidence_Score']].drop_duplicates(subset=['Claim_ID'])
+            df = df.merge(res_df, on='Claim_ID', how='left')
+            # Persist merged results back to session_state so other tabs (Visualization/Insights) see them
+            st.session_state.df = df
+        else:
+            # Ensure column exists to avoid KeyErrors later
+            if 'Emerging_Risk_Category' not in df.columns:
+                df['Emerging_Risk_Category'] = None
+            if 'Confidence_Score' not in df.columns:
+                df['Confidence_Score'] = None
+            st.session_state.df = df
+
+        # Convert dates and add Year
+        df['Claim_Date'] = pd.to_datetime(df['Claim_Date'], errors='coerce')
+        df['Year'] = df['Claim_Date'].dt.year
+
+        st.subheader("Interactive Risk Analysis")
+
+        # Filters (includes Emerging Risk Category)
+        years = sorted(df['Year'].dropna().unique())
+        # product_lines = sorted(df['Product_Line'].dropna().unique())
+        # industries = sorted(df['Industry_Segment'].dropna().unique())
+        # countries = sorted(df['Country'].dropna().unique())
+        # claim_types = sorted(df['Claim_Type'].dropna().unique())
+        categories = sorted(df['Emerging_Risk_Category'].dropna().unique())
+
+        selected_years = st.multiselect("Select Years", years, default=years)
+        # selected_products = st.multiselect("Select Product Lines", product_lines, default=product_lines)
+        # selected_industries = st.multiselect("Select Industry Segments", industries, default=industries)
+        # selected_countries = st.multiselect("Select Countries", countries, default=countries)
+        # selected_claim_types = st.multiselect("Select Claim Types", claim_types, default=claim_types)
+        selected_categories = st.multiselect("Select Emerging Risk Categories", categories, default=categories if categories else [])
+
+        # Apply filters (handle empty category list)
+        filtered_df = df[
+            (df['Year'].isin(selected_years)) 
+            # &
+            # (df['Product_Line'].isin(selected_products)) &
+            # (df['Industry_Segment'].isin(selected_industries)) &
+            # (df['Country'].isin(selected_countries)) &
+            # (df['Claim_Type'].isin(selected_claim_types))
+        ]
+        if selected_categories:
+            filtered_df = filtered_df[filtered_df['Emerging_Risk_Category'].isin(selected_categories)]
+
+        # KPI Cards
+        total_claims = filtered_df['Claim_ID'].nunique()
+        total_reported_loss = filtered_df['Reported_Loss_Amount'].sum()
+        total_settled = filtered_df['Final_Settled_Amount'].sum()
+        total_recovery = filtered_df['Recovery_Amount'].sum()
+        avg_loss_ratio = filtered_df['Loss_Ratio'].mean()
+
+        st.write("### Key KPIs")
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("Total Claims", human_count(total_claims))
+        col2.metric("Reported Loss", human_currency(total_reported_loss))
+        col3.metric("Settled Amount", human_currency(total_settled))
+        col4.metric("Recovery Amount", human_currency(total_recovery))
+        col5.metric("Avg Loss Ratio", f"{avg_loss_ratio:.2%}" if not pd.isna(avg_loss_ratio) else "N/A")
+
+        # Aggregated Summary: yearly totals and Year x Emerging Risk Category breakdown
+        yearly_agg = filtered_df.groupby("Year").agg({
+            "Claim_ID": "count",
+            "Reported_Loss_Amount": "sum",
+            "Final_Settled_Amount": "sum",
+            "Recovery_Amount": "sum",
+            "Net_Loss": "sum",
+            "Loss_Ratio": "mean"
+        }).reset_index()
+        yearly_agg.columns = ["Year", "Claim_Count", "Total_Reported_Loss", "Total_Settled", "Total_Recovery", "Total_Net_Loss", "Avg_Loss_Ratio"]
+
+        category_agg = filtered_df.groupby(["Year", "Emerging_Risk_Category"]).agg({
+            "Claim_ID": "count",
+            "Reported_Loss_Amount": "sum",
+            "Final_Settled_Amount": "sum"
+        }).reset_index().rename(columns={"Claim_ID": "Claim_Count"})
+
+        st.write("### Aggregated Summary - Yearly Totals")
+        st.dataframe(yearly_agg)
+        st.download_button("Download Yearly Aggregated Summary", yearly_agg.to_csv(index=False), "yearly_aggregated_summary.csv")
+
+        st.write("### Aggregated Summary - Year x Emerging Risk Category")
+        st.dataframe(category_agg)
+        st.download_button("Download Category Aggregated Summary", category_agg.to_csv(index=False), "category_aggregated_summary.csv")
+
+        # Charts
+        st.write("### Interactive Charts")
+        fig_claim = px.bar(yearly_agg, x="Year", y="Total_Settled", title="Claim Volume Over Years")
+        fig_claim.update_yaxes(tickformat=".2s", tickprefix="$")
+        st.plotly_chart(fig_claim, use_container_width=True)
+
+        fig_recovery = px.line(yearly_agg, x="Year", y="Total_Recovery", title="Recovery Amount Over Years", markers=True)
+        fig_recovery.update_yaxes(tickformat=".2s", tickprefix="$")
+        st.plotly_chart(fig_recovery, use_container_width=True)
+
+        fig_loss = px.line(yearly_agg, x="Year", y="Total_Reported_Loss", title="Reported Loss Amount Over Years", markers=True)
+        fig_loss.update_yaxes(tickformat=".2s", tickprefix="$")
+        st.plotly_chart(fig_loss, use_container_width=True)
+
+        fig_ratio = px.line(yearly_agg, x="Year", y="Avg_Loss_Ratio", title="Average Loss Ratio Over Years", markers=True)
+        fig_ratio.update_yaxes(tickformat=".0%")
+        st.plotly_chart(fig_ratio, use_container_width=True)
+
+        # Chart: Year-on-Year by Emerging Risk Category
+        if not category_agg.empty:
+            fig_cat = px.bar(category_agg, x="Year", y="Claim_Count", color="Emerging_Risk_Category",
+                             title="Year-on-Year Claim Count by Emerging Risk Category", barmode='group')
+            fig_cat.update_yaxes(tickformat=".2s")
+            st.plotly_chart(fig_cat, use_container_width=True)
+
+    else:
+        st.warning("Please upload data in Tab 1")
+
+# Tab 4: Visualization
 with tabs[3]:
-    if "result_df" in st.session_state:
-        result_df = st.session_state.result_df
-        top_risks = result_df['Emerging_Risk_Category'].value_counts().head(5)
-        st.write("### Top Emerging Risks")
-        st.bar_chart(top_risks)
-        threshold = st.slider("Confidence threshold for new risks", min_value=0.0, max_value=1.0, value=0.5, step=0.05)
-        new_risks = result_df[result_df['Confidence_Score'] < threshold]
-        st.write(f"### Claims with Confidence < {threshold}")
-        st.dataframe(new_risks)
-    else:
-        st.warning("Run NLP Inference in Tab 2")
+    if "df" in st.session_state:
+        df = st.session_state.df
+        st.subheader("WordClouds & Year-on-Year Comparison")
 
-# Tab 5: Visualization
+        # Only show WordCloud UI when there is at least one non-null category
+        if 'Claims_Description' in df.columns and 'Emerging_Risk_Category' in df.columns:
+            categories = df['Emerging_Risk_Category'].dropna().unique().tolist()
+            if categories:
+                selected_category = st.selectbox("Select Category for WordCloud", categories)
+                text = " ".join(df[df['Emerging_Risk_Category'] == selected_category]['Claims_Description'].dropna().astype(str))
+                if text.strip():
+                    try:
+                        wc = WordCloud(width=800, height=400, background_color='white').generate(text)
+                        fig_wc, ax = plt.subplots()
+                        ax.imshow(wc, interpolation='bilinear')
+                        ax.axis("off")
+                        st.pyplot(fig_wc)
+                    except ValueError:
+                        st.info("Not enough text to generate a word cloud for the selected category.")
+                else:
+                    st.info("No claim descriptions available for the selected category to generate a word cloud.")
+            else:
+                st.info("No Emerging Risk Categories available. Run NLP Inference in Tab 2 first.")
+
+        # Year-on-year: fill missing categories with 'Uncategorized' to ensure grouping works
+        yoy_df = df.copy()
+        # if 'Emerging_Risk_Category' not in yoy_df.columns:
+        #     yoy_df['Emerging_Risk_Category'] = 'Uncategorized'
+        # else:
+        #     yoy_df['Emerging_Risk_Category'] = yoy_df['Emerging_Risk_Category'].fillna('Uncategorized')
+        if 'Year' not in yoy_df.columns:
+            yoy_df['Year'] = pd.to_datetime(yoy_df.get('Claim_Date', pd.Series())).dt.year
+        yoy_df = yoy_df.groupby(['Year', 'Emerging_Risk_Category']).agg({'Claim_ID': 'count'}).reset_index()
+        fig_yoy = px.bar(yoy_df, x='Year', y='Claim_ID', color='Emerging_Risk_Category',
+                               title='Year-on-Year Claim Count by Emerging Risk Category', barmode='group')
+        fig_yoy.update_yaxes(tickformat=".2s")
+        st.plotly_chart(fig_yoy, use_container_width=True)
+    else:
+        st.warning("Please upload data in Tab 1")
+
+# Tab 5: Insights
 with tabs[4]:
-    if "result_df" in st.session_state:
-        result_df = st.session_state.result_df
-        fig = px.histogram(result_df, x="Emerging_Risk_Category", title="Distribution of Risk Categories")
-        st.plotly_chart(fig)
-        text = " ".join(result_df['Claims_Description'].dropna().tolist())
-        wc = WordCloud(width=800, height=400).generate(text)
-        st.write("### Word Cloud of Claims Descriptions")
-        fig_wc, ax = plt.subplots()
-        ax.imshow(wc, interpolation='bilinear')
-        ax.axis("off")
-        st.pyplot(fig_wc)
-    else:
-        st.warning("Run NLP Inference in Tab 2")
+    if "df" in st.session_state:
+        df = st.session_state.df
+        st.subheader("LLM-Based Newsletter Summary")
+        summary_points = []
 
-# Tab 6: Insights
-with tabs[5]:
-    if "result_df" in st.session_state:
-        result_df = st.session_state.result_df
-        st.write("### Key Insights")
-        st.markdown("- Most frequent risk category: **{}**".format(result_df['Emerging_Risk_Category'].mode()[0]))
-        st.markdown("- Average confidence score: **{:.2f}**".format(result_df['Confidence_Score'].mean()))
-        st.markdown("- Claims with low confidence (< 0.5): **{}**".format((result_df['Confidence_Score'] < 0.5).sum()))
-        st.download_button("Download Full Results", result_df.to_csv(index=False), "emerging_risk_results.csv")
+        # Ensure Year exists
+        if 'Year' not in df.columns:
+            df['Claim_Date'] = pd.to_datetime(df.get('Claim_Date', pd.Series()), errors='coerce')
+            df['Year'] = df['Claim_Date'].dt.year
+
+        # Top categories (safe handling if empty)
+        top_categories = df['Emerging_Risk_Category'].dropna().value_counts().head(3)
+        if not top_categories.empty:
+            for category, count in top_categories.items():
+                avg_loss = df[df['Emerging_Risk_Category'] == category]['Reported_Loss_Amount'].mean()
+                avg_loss_text = f"${avg_loss:,.2f}" if not pd.isna(avg_loss) else "N/A"
+                summary_points.append(f"- **{category}** had {count} claims with an average reported loss of {avg_loss_text}.")
+        else:
+            summary_points.append("- No Emerging Risk Categories detected yet. Run NLP Inference in Tab 2.")
+
+        # Recent year highlights (guard against empty sequences)
+        recent_year = df['Year'].dropna()
+        if not recent_year.empty:
+            recent_year = int(recent_year.max())
+            recent_data = df[df['Year'] == recent_year]
+            if not recent_data.empty:
+                recent_counts = recent_data['Emerging_Risk_Category'].dropna().value_counts()
+                if not recent_counts.empty:
+                    top_recent = recent_counts.idxmax()
+                    summary_points.append(f"- In {recent_year}, the most frequent risk category was **{top_recent}**.")
+                else:
+                    summary_points.append(f"- In {recent_year}, no categorized claims were available.")
+        else:
+            summary_points.append("- No claim year information available to generate recent highlights.")
+
+        st.write("### Emerging Risk Highlights")
+        for point in summary_points:
+            st.markdown(point)
+
+        # Download option
+        newsletter_text = "Emerging Risk Newsletter Summary:\n\n" + "\n".join(summary_points)
+        st.download_button("Download Newsletter Summary", newsletter_text, "risk_newsletter_summary.txt")
     else:
-        st.warning("Run NLP Inference in Tab 2")
+        st.warning("Please upload data in Tab 1")
+
+# LLM generation helper (uses Hugging Face Inference API and the same API key)
+def generate_newsletter(prompt, model, max_new_tokens=256, retries=2, timeout=90):
+    model_url = f"https://api-inference.huggingface.co/models/{model}"
+    
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": max_new_tokens
+        }
+    }
+
+    for attempt in range(retries + 1):
+        try:
+            
+            resp = requests.post(model_url, headers=headers, json=payload, timeout=timeout)
+        except requests.exceptions.RequestException as e:
+            
+            if attempt == retries:
+                return {"error": str(e)}
+            time.sleep(2)
+            continue
+        if not (200 <= resp.status_code < 300):
+            if 500 <= resp.status_code < 600 and attempt < retries:
+                time.sleep(2)
+                continue
+            return {"error": f"HTTP {resp.status_code}: {resp.text.strip()[:1000]}"}
+        try:
+            data = resp.json()
+            print('Preeti Rucksss...',data)
+        except ValueError:
+            return {"error": f"Invalid JSON response: {resp.text.strip()[:1000]}"}
+        # HuggingFace generation models sometimes return a list of dicts with 'generated_text' or 'summary_text'
+        if isinstance(data, list) and len(data) > 0:
+            if isinstance(data[0], dict):
+                generated = data[0].get("generated_text") or data[0].get("summary_text") or str(data[0])
+            else:
+                generated = str(data[0])
+        elif isinstance(data, dict):
+            generated = data.get("generated_text") or data.get("summary_text") or str(data)
+        else:
+            generated = str(data)
+        return {"text": generated}
+    return {"error": "Unknown error calling LLM"}
+
+# Tab 5: Insights (LLM-enhanced newsletter)
+with tabs[4]:
+    if "df" in st.session_state:
+        df = st.session_state.df.copy()
+        st.subheader("LLM-Based Newsletter Summary")
+        summary_points = []
+
+        # Ensure Year exists
+        if 'Year' not in df.columns:
+            df['Claim_Date'] = pd.to_datetime(df.get('Claim_Date', pd.Series()), errors='coerce')
+            df['Year'] = df['Claim_Date'].dt.year
+
+        # Top categories (safe handling if empty)
+        top_categories = df['Emerging_Risk_Category'].dropna().value_counts().head(5)
+        if not top_categories.empty:
+            for category, count in top_categories.items():
+                avg_loss = df[df['Emerging_Risk_Category'] == category]['Reported_Loss_Amount'].mean()
+                avg_loss_text = f"${avg_loss:,.2f}" if not pd.isna(avg_loss) else "N/A"
+                summary_points.append(f"- **{category}**: {count} claims, avg reported loss {avg_loss_text}")
+        else:
+            summary_points.append("- No Emerging Risk Categories detected yet. Run NLP Inference in Tab 2.")
+
+        # Recent year highlights
+        recent_year_series = df['Year'].dropna()
+        recent_year = None
+        if not recent_year_series.empty:
+            recent_year = int(recent_year_series.max())
+            recent_data = df[df['Year'] == recent_year]
+            if not recent_data.empty:
+                recent_counts = recent_data['Emerging_Risk_Category'].dropna().value_counts()
+                if not recent_counts.empty:
+                    top_recent = recent_counts.idxmax()
+                    summary_points.append(f"- In {recent_year}, most frequent risk category: **{top_recent}**.")
+                else:
+                    summary_points.append(f"- In {recent_year}, no categorized claims were available.")
+        else:
+            summary_points.append("- No claim year information available to generate recent highlights.")
+
+        # Compute simple year-over-year change for top categories (if enough data)
+        yoy_lines = []
+        if 'Year' in df.columns and not top_categories.empty:
+            pivot = df.dropna(subset=['Emerging_Risk_Category']).groupby(['Year', 'Emerging_Risk_Category']).size().unstack(fill_value=0)
+            years_sorted = sorted([y for y in pivot.index if pd.notna(y)])
+            if len(years_sorted) >= 2:
+                y_latest = years_sorted[-1]
+                y_prev = years_sorted[-2]
+                for category in top_categories.index:
+                    latest = int(pivot.loc[y_latest, category]) if category in pivot.columns and y_latest in pivot.index else 0
+                    prev = int(pivot.loc[y_prev, category]) if category in pivot.columns and y_prev in pivot.index else 0
+                    change = latest - prev
+                    pct = f"{(change/prev):.0%}" if prev != 0 else "N/A" if latest == 0 else "∞"
+                    yoy_lines.append(f"- {category}: {prev} → {latest} (Δ {change}, {pct}) between {y_prev} and {y_latest}")
+        if yoy_lines:
+            summary_points.append("- Year-over-Year changes for top categories:")
+            summary_points.extend(yoy_lines)
+
+        # Display the short summary points
+        st.write("### Emerging Risk Highlights (Derived)")
+        for point in summary_points:
+            st.markdown(point)
+
+        # Build prompt for LLM
+        prompt_header = "You are an insurance claims analyst assistant. Given the derived emerging risk points and trends, produce a short newsletter (3-6 bullets) summarizing current trends, near-term (6-12 months) future possibilities, and 3 actionable recommendations for risk owners.\n\n"
+        derived_text = "\n".join(summary_points)
+        prompt = prompt_header + "Derived data:\n" + derived_text + "\n\nNewsletter:\n"
+
+        st.markdown("### Generate newsletter using LLM")
+        selected_generation_model = st.selectbox("LLM model (Hugging Face)", ["gpt2", "bigscience/bloom", "mistralai/Mistral-7B-Instruct-v0.1"], index=0)
+        max_tokens = st.slider("Max tokens for generation", min_value=64, max_value=512, value=256, step=64)
+
+        if st.button("Generate Newsletter (LLM)"):
+            with st.spinner("Generating newsletter..."):
+                llm_result = generate_newsletter(prompt, model=selected_generation_model, max_new_tokens=max_tokens)
+                if isinstance(llm_result, dict) and llm_result.get("error"):
+                    st.error(f"LLM error: {llm_result['error']}")
+                else:
+                    newsletter_text = llm_result.get("text") if isinstance(llm_result, dict) else str(llm_result)
+                    # Show generated newsletter and allow edits
+                    st.write("### Generated Newsletter")
+                    editable = st.text_area("Edit newsletter before download/publish", value=newsletter_text, height=250)
+                    st.download_button("Download Newsletter Summary", editable, "llm_risk_newsletter.txt")
+        else:
+            st.info("Click 'Generate Newsletter (LLM)' to produce a newsletter using the selected model.")
+
+    else:
+        st.warning("Please upload data in Tab 1")
