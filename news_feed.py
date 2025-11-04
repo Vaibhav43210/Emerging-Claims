@@ -32,7 +32,7 @@ from eventregistry import (
 # [secrets]
 # EVENTREGISTRY_API_KEY = "hf_xxx"
 # HUGGINGFACE_API_KEY   = "hf_xxx"
-EVENTREGISTRY_API_KEY = st.secrets.get("NEWSAPI_AI_KEY") 
+EVENTREGISTRY_API_KEY = st.secrets.get("EVENTREGISTRY_API_KEY") 
 HUGGINGFACE_API_KEY   = st.secrets.get("HUGGINGFACE_API_KEY")   
 
 # Optional corporate proxies (fill if needed; else leave empty)
