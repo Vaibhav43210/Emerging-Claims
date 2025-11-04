@@ -4,6 +4,7 @@ import requests, os, time
 import plotly.express as px
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
+from news_feed import render_news_feed_insights
 
 st.set_page_config(layout="wide")
 
@@ -14,8 +15,9 @@ model_options = {
     "Multilingual (XLM-RoBERTa)": "joeddav/xlm-roberta-large-xnli"
 
 }
-selected_model = st.sidebar.selectbox("Select NLP Model", list(model_options.keys()))
-API_URL = f"https://api-inference.huggingface.co/models/{model_options[selected_model]}"
+# selected_model = st.sidebar.selectbox("Select NLP Model", list(model_options.keys()))
+# API_URL = f"https://router.huggingface.co/hf-inference/models/{model_options[selected_model]}"
+API_URL = f"https://router.huggingface.co/hf-inference/models/valhalla/distilbart-mnli-12-3"
 
 # Hugging Face API key
 api_key = st.secrets.get("HUGGINGFACE_API_KEY") if hasattr(st, "secrets") else os.environ.get("HUGGINGFACE_API_KEY")
@@ -82,7 +84,7 @@ def query_model(text, retries=2, timeout=90):
 # Streamlit app setup
 
 st.title("Emerging Risk Intelligence Engine")
-tabs = st.tabs(["Data Load", "NLP Inference", "Risk Analysis", "Dimensional YOY Comparison", "Newsletter Insights"])
+tabs = st.tabs(["Data Load", "NLP Inference", "Risk Analysis", "Dimensional YOY Comparison", "Newsletter Insights", "News Feed Insights"])
 
 # Tab 1: Data Load
 with tabs[0]:
@@ -293,97 +295,6 @@ with tabs[3]:
     else:
         st.warning("Please upload data in Tab 1")
 
-# Tab 5: Insights
-with tabs[4]:
-    if "df" in st.session_state:
-        df = st.session_state.df
-        st.subheader("LLM-Based Newsletter Summary")
-        summary_points = []
-
-        # Ensure Year exists
-        if 'Year' not in df.columns:
-            df['Claim_Date'] = pd.to_datetime(df.get('Claim_Date', pd.Series()), errors='coerce')
-            df['Year'] = df['Claim_Date'].dt.year
-
-        # Top categories (safe handling if empty)
-        top_categories = df['Emerging_Risk_Category'].dropna().value_counts().head(3)
-        if not top_categories.empty:
-            for category, count in top_categories.items():
-                avg_loss = df[df['Emerging_Risk_Category'] == category]['Reported_Loss_Amount'].mean()
-                avg_loss_text = f"${avg_loss:,.2f}" if not pd.isna(avg_loss) else "N/A"
-                summary_points.append(f"- **{category}** had {count} claims with an average reported loss of {avg_loss_text}.")
-        else:
-            summary_points.append("- No Emerging Risk Categories detected yet. Run NLP Inference in Tab 2.")
-
-        # Recent year highlights (guard against empty sequences)
-        recent_year = df['Year'].dropna()
-        if not recent_year.empty:
-            recent_year = int(recent_year.max())
-            recent_data = df[df['Year'] == recent_year]
-            if not recent_data.empty:
-                recent_counts = recent_data['Emerging_Risk_Category'].dropna().value_counts()
-                if not recent_counts.empty:
-                    top_recent = recent_counts.idxmax()
-                    summary_points.append(f"- In {recent_year}, the most frequent risk category was **{top_recent}**.")
-                else:
-                    summary_points.append(f"- In {recent_year}, no categorized claims were available.")
-        else:
-            summary_points.append("- No claim year information available to generate recent highlights.")
-
-        st.write("### Emerging Risk Highlights")
-        for point in summary_points:
-            st.markdown(point)
-
-        # Download option
-        newsletter_text = "Emerging Risk Newsletter Summary:\n\n" + "\n".join(summary_points)
-        st.download_button("Download Newsletter Summary", newsletter_text, "risk_newsletter_summary.txt")
-    else:
-        st.warning("Please upload data in Tab 1")
-
-# LLM generation helper (uses Hugging Face Inference API and the same API key)
-def generate_newsletter(prompt, model, max_new_tokens=256, retries=2, timeout=90):
-    model_url = f"https://api-inference.huggingface.co/models/{model}"
-    
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": max_new_tokens
-        }
-    }
-
-    for attempt in range(retries + 1):
-        try:
-            
-            resp = requests.post(model_url, headers=headers, json=payload, timeout=timeout)
-        except requests.exceptions.RequestException as e:
-            
-            if attempt == retries:
-                return {"error": str(e)}
-            time.sleep(2)
-            continue
-        if not (200 <= resp.status_code < 300):
-            if 500 <= resp.status_code < 600 and attempt < retries:
-                time.sleep(2)
-                continue
-            return {"error": f"HTTP {resp.status_code}: {resp.text.strip()[:1000]}"}
-        try:
-            data = resp.json()
-            print('Preeti Rucksss...',data)
-        except ValueError:
-            return {"error": f"Invalid JSON response: {resp.text.strip()[:1000]}"}
-        # HuggingFace generation models sometimes return a list of dicts with 'generated_text' or 'summary_text'
-        if isinstance(data, list) and len(data) > 0:
-            if isinstance(data[0], dict):
-                generated = data[0].get("generated_text") or data[0].get("summary_text") or str(data[0])
-            else:
-                generated = str(data[0])
-        elif isinstance(data, dict):
-            generated = data.get("generated_text") or data.get("summary_text") or str(data)
-        else:
-            generated = str(data)
-        return {"text": generated}
-    return {"error": "Unknown error calling LLM"}
-
 # Tab 5: Insights (LLM-enhanced newsletter)
 with tabs[4]:
     if "df" in st.session_state:
@@ -445,28 +356,33 @@ with tabs[4]:
         for point in summary_points:
             st.markdown(point)
 
-        # Build prompt for LLM
-        prompt_header = "You are an insurance claims analyst assistant. Given the derived emerging risk points and trends, produce a short newsletter (3-6 bullets) summarizing current trends, near-term (6-12 months) future possibilities, and 3 actionable recommendations for risk owners.\n\n"
-        derived_text = "\n".join(summary_points)
-        prompt = prompt_header + "Derived data:\n" + derived_text + "\n\nNewsletter:\n"
+#         # Build prompt for LLM
+#         prompt_header = "You are an insurance claims analyst assistant. Given the derived emerging risk points and trends, produce a short newsletter (3-6 bullets) summarizing current trends, near-term (6-12 months) future possibilities, and 3 actionable recommendations for risk owners.\n\n"
+#         derived_text = "\n".join(summary_points)
+#         prompt = prompt_header + "Derived data:\n" + derived_text + "\n\nNewsletter:\n"
 
-        st.markdown("### Generate newsletter using LLM")
-        selected_generation_model = st.selectbox("LLM model (Hugging Face)", ["gpt2", "bigscience/bloom", "mistralai/Mistral-7B-Instruct-v0.1"], index=0)
-        max_tokens = st.slider("Max tokens for generation", min_value=64, max_value=512, value=256, step=64)
+        # st.markdown("### Generate newsletter using LLM")
+        # selected_generation_model = st.selectbox("LLM model (Hugging Face)", ["gpt2", "bigscience/bloom", "mistralai/Mistral-7B-Instruct-v0.1"], index=0)
+        # max_tokens = st.slider("Max tokens for generation", min_value=64, max_value=512, value=256, step=64)
 
-        if st.button("Generate Newsletter (LLM)"):
-            with st.spinner("Generating newsletter..."):
-                llm_result = generate_newsletter(prompt, model=selected_generation_model, max_new_tokens=max_tokens)
-                if isinstance(llm_result, dict) and llm_result.get("error"):
-                    st.error(f"LLM error: {llm_result['error']}")
-                else:
-                    newsletter_text = llm_result.get("text") if isinstance(llm_result, dict) else str(llm_result)
-                    # Show generated newsletter and allow edits
-                    st.write("### Generated Newsletter")
-                    editable = st.text_area("Edit newsletter before download/publish", value=newsletter_text, height=250)
-                    st.download_button("Download Newsletter Summary", editable, "llm_risk_newsletter.txt")
-        else:
-            st.info("Click 'Generate Newsletter (LLM)' to produce a newsletter using the selected model.")
+        # if st.button("Generate Newsletter (LLM)"):
+        #     with st.spinner("Generating newsletter..."):
+        #         llm_result = generate_newsletter(prompt, model=selected_generation_model, max_new_tokens=max_tokens)
+        #         if isinstance(llm_result, dict) and llm_result.get("error"):
+        #             st.error(f"LLM error: {llm_result['error']}")
+        #         else:
+        #             newsletter_text = llm_result.get("text") if isinstance(llm_result, dict) else str(llm_result)
+        #             # Show generated newsletter and allow edits
+        #             st.write("### Generated Newsletter")
+        #             editable = st.text_area("Edit newsletter before download/publish", value=newsletter_text, height=250)
+        #             st.download_button("Download Newsletter Summary", editable, "llm_risk_newsletter.txt")
+        # else:
+        #     st.info("Click 'Generate Newsletter (LLM)' to produce a newsletter using the selected model.")
 
     else:
         st.warning("Please upload data in Tab 1")
+
+# Tab 6: News Feed Insights
+with tabs[5]:
+    st.subheader("News Feed Insights")
+    render_news_feed_insights()
