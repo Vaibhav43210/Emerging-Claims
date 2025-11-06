@@ -17,7 +17,7 @@ model_options = {
 }
 # selected_model = st.sidebar.selectbox("Select NLP Model", list(model_options.keys()))
 # API_URL = f"https://router.huggingface.co/hf-inference/models/{model_options[selected_model]}"
-API_URL = f"https://router.huggingface.co/hf-inference/models/valhalla/distilbart-mnli-12-3"
+API_URL = f"https://router.huggingface.co/hf-inference/models/facebook/bart-large-mnli"
 
 # Hugging Face API key
 api_key = st.secrets.get("HUGGINGFACE_API_KEY") if hasattr(st, "secrets") else os.environ.get("HUGGINGFACE_API_KEY")
@@ -67,6 +67,7 @@ def query_model(text, retries=2, timeout=90):
             response = requests.post(API_URL, headers=headers, json=payload, timeout=timeout)
         except requests.exceptions.RequestException as e:
             if attempt == retries:
+                print(f"Request failed after {retries} retries: {e}")
                 return {"error": str(e)}
             time.sleep(2)
             continue
@@ -74,10 +75,12 @@ def query_model(text, retries=2, timeout=90):
             if 500 <= response.status_code < 600 and attempt < retries:
                 time.sleep(2)
                 continue
+            print(f"Model API error {response.status_code}: {response.text.strip()[:1000]}")
             return {"error": f"HTTP {response.status_code}: {response.text.strip()[:1000]}"}
         try:
             return response.json()
         except ValueError:
+            print(f"Invalid JSON response: {response.text.strip()[:1000]}")
             return {"error": f"Invalid JSON response: {response.text.strip()[:1000]}"}
     return {"error": "Unknown error contacting model"}
 
@@ -99,7 +102,7 @@ with tabs[0]:
 with tabs[1]:
     if "df" in st.session_state:
         df = st.session_state.df
-        num_claims = st.slider("Select number of claims to process", min_value=5, max_value=100, value=50, step=5)
+        num_claims = st.slider("Select number of claims to process", min_value=1, max_value=100, value=50, step=5)
         if st.button("Run NLP Classification"):
             with st.spinner("Running NLP classification..."):
                 results = []
@@ -108,16 +111,20 @@ with tabs[1]:
                     desc = row['Claims_Description']
                     claim_id = row['Claim_ID']
                     prediction = query_model(desc)
+                    print(f"Processed Claim ID {claim_id}: {prediction}")
                     if isinstance(prediction, dict) and prediction.get("error"):
                         label = "Error"
                         score = 0.0
-                        st.error(f"Model error for Claim {claim_id}: {prediction['error']}")
-                    elif 'labels' in prediction and 'scores' in prediction:
-                        label = prediction['labels'][0]
-                        score = prediction['scores'][0]
+                        print(f"Model error for Claim {claim_id}: {prediction['error']}")
+                    elif isinstance(prediction, list) and len(prediction) > 0:
+                        label = prediction[0]['label']
+                        score = prediction[0]['score']
+
+                        print(f"Claim ID {claim_id} classified as {label} with score {score}")
                     else:
                         label = "Error"
                         score = 0.0
+                        print(f"Unexpected model response for Claim ID {claim_id}: {prediction}")
                     results.append({
                         "Claim_ID": claim_id,
                         "Claims_Description": desc,
