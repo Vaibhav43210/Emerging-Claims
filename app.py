@@ -84,7 +84,7 @@ def query_model(text, retries=2, timeout=90):
 # Streamlit app setup
 
 st.title("Emerging Risk Intelligence Engine")
-tabs = st.tabs(["Data Load", "NLP Inference", "Risk Analysis", "Dimensional YOY Comparison", "Newsletter Insights", "News Feed Insights"])
+tabs = st.tabs(["Data Load", "NLP Inference", "Risk Analysis", "Dimensional YOY Comparison", "Summarized Newsletter", "Emerging News Feed"])
 
 # Tab 1: Data Load
 with tabs[0]:
