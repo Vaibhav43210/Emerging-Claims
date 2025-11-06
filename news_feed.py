@@ -47,8 +47,8 @@ REQUEST_KW = {"proxies": PROXIES, "timeout": 60}  # add verify="<path-to-ca>.pem
 # =========================
 DEFAULT_KEYWORDS = ["Cyber", "Water", "Professional Negligence", "Injured/Illness", "Malicious Damage", "Fire"]
 DEFAULT_MAX_PER_KEYWORD = 5
-DEFAULT_START_DATE = datetime.today().date() - timedelta(days=7)
-DEFAULT_END_DATE   = datetime.today().date()
+DEFAULT_START_DATE = "2025-11-01"
+DEFAULT_END_DATE   = "2025-11-02"
 
 # =========================
 # 2) Country normalization / detection
