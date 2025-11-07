@@ -1,12 +1,3 @@
-# news_feed.py
-# Reusable News Feed Insights module for Streamlit apps
-# - EventRegistry fetch via QueryArticlesIter + ReturnInfo (correct usage)
-# - Per-article summarization via Hugging Face Inference (robust + fallbacks)
-# - World choropleth by country mentions
-# - LLM roll-up summary with offline fallback
-# - All in-memory (no CSVs)
-# - No Debug/Refresh/Clear Cache UI
-
 import re
 import time
 from datetime import datetime, timezone, timedelta
@@ -45,10 +36,11 @@ REQUEST_KW = {"proxies": PROXIES, "timeout": 60}  # add verify="<path-to-ca>.pem
 # =========================
 # 1) DEFAULT PARAMETERS (can be overridden via function call)
 # =========================
-DEFAULT_KEYWORDS = ["Cyber", "Water", "Professional Negligence", "Injured/Illness", "Malicious Damage", "Fire"]
+# DEFAULT_KEYWORDS = ['Operational Error', 'Malicious Activity', 'Natural Disaster', 'Product/Service Failure' , 'Injury/Illness']
+DEFAULT_KEYWORDS = ['Cyber', 'Fire', 'Flood', 'Malicious Activity' , 'Injury/Illness']
 DEFAULT_MAX_PER_KEYWORD = 5
-DEFAULT_START_DATE = "2025-11-01"
-DEFAULT_END_DATE   = "2025-11-02"
+DEFAULT_START_DATE = "2025-10-08"
+DEFAULT_END_DATE   = "2025-11-07"
 
 # =========================
 # 2) Country normalization / detection
@@ -69,8 +61,16 @@ COUNTRY_SYNONYMS = {
     "Syria": "Syrian Arab Republic",
     "Vatican": "Holy See (Vatican City State)",
 }
+
 def _normalize_country(name: str) -> str:
-    return COUNTRY_SYNONYMS.get((name or "").strip(), (name or "").strip())
+    name = (name or "").strip()
+    name = COUNTRY_SYNONYMS.get(name, name)
+    try:
+        country = pycountry.countries.lookup(name)
+        return country.name
+    except LookupError:
+        return name
+
 
 def _to_iso3(name: str) -> Optional[str]:
     if not name:
@@ -329,7 +329,7 @@ def _linkify(df: pd.DataFrame) -> pd.DataFrame:
     def mk(row):
         t = row.get("title") or "link"
         u = row.get("url") or ""
-        return f"{t}" if u else t
+        return f"<a href='{u}' target='_blank'>{t}</a>" if u else t
     df["Article"] = df.apply(mk, axis=1)
     return df
 
@@ -381,25 +381,25 @@ def render_news_feed_insights(
     st.divider()
 
     # 3) Sidebar filters (local to this component)
-    with st.sidebar:
-        st.markdown("### News Feed Filters")
-        if df.empty:
-            st.caption("No data to filter.")
-            category = "All"; date_enabled = False; d1 = d2 = None
+    
+    st.markdown("### News Feed Filters")
+    if df.empty:
+        st.caption("No data to filter.")
+        category = "All"; date_enabled = False; d1 = d2 = None
+    else:
+        categories = sorted([c for c in df["keyword"].dropna().unique() if str(c).strip()])
+        category = st.selectbox("Category", ["All"] + categories, index=0, key=f"nf_cat::{cache_key}")
+        min_dt, max_dt = df["date_parsed"].min(), df["date_parsed"].max()
+        if pd.isna(min_dt) or pd.isna(max_dt):
+            date_enabled = False; st.caption("No valid dates detected."); d1 = d2 = None
         else:
-            categories = sorted([c for c in df["keyword"].dropna().unique() if str(c).strip()])
-            category = st.selectbox("Category", ["All"] + categories, index=0, key=f"nf_cat::{cache_key}")
-            min_dt, max_dt = df["date_parsed"].min(), df["date_parsed"].max()
-            if pd.isna(min_dt) or pd.isna(max_dt):
-                date_enabled = False; st.caption("No valid dates detected."); d1 = d2 = None
-            else:
-                date_enabled = True
-                d1, d2 = st.date_input(
-                    "Date range",
-                    value=(min_dt.date(), max_dt.date()),
-                    min_value=min_dt.date(), max_value=max_dt.date(),
-                    key=f"nf_dates::{cache_key}"
-                )
+            date_enabled = True
+            d1, d2 = st.date_input(
+                "Date range",
+                value=(min_dt.date(), max_dt.date()),
+                min_value=min_dt.date(), max_value=max_dt.date(),
+                key=f"nf_dates::{cache_key}"
+            )
 
     # 4) Apply filters once, share across inner tabs
     df_sel = df.copy()
@@ -441,3 +441,265 @@ def render_news_feed_insights(
                     bullets, date_lbl, df_sel
                 )
             st.markdown(summary)
+
+
+# news_feed.py
+# import re
+# from datetime import datetime, timedelta
+# from typing import Optional, List, Dict
+# import pandas as pd
+# import pycountry
+# import plotly.express as px
+# import requests
+# import streamlit as st
+# from eventregistry import EventRegistry, QueryArticlesIter, ReturnInfo, ArticleInfoFlags, SourceInfoFlags
+
+# from sklearn.metrics.pairwise import cosine_similarity
+
+# from sentence_transformers import SentenceTransformer
+# from sklearn.metrics.pairwise import cosine_similarity
+
+
+
+# # =========================
+# # CONFIG: API KEYS
+# # =========================
+# EVENTREGISTRY_API_KEY = st.secrets["EVENTREGISTRY_API_KEY"]
+# HUGGINGFACE_API_KEY = st.secrets["HUGGINGFACE_API_KEY"]
+
+# # =========================
+# # Claims Extraction
+# # =========================
+
+# def extract_claims_info(text: str) -> Dict[str, Optional[str]]:
+#     claims_data = {
+#         "claim_amount": None,
+#         "loss_ratio": None,
+#         "volume": None,
+#         "severity": None,
+#         "profession": None,
+#         "loss_amount": None  # NEW FIELD
+#     }
+
+#     # Existing claim amount extraction
+#     match = re.search(r"claim amount of \$([\d\.]+)\s*(billion|million)?", text, re.IGNORECASE)
+#     if match:
+#         amount = float(match.group(1))
+#         unit = match.group(2)
+#         if unit == "billion":
+#             amount *= 1_000_000_000
+#         elif unit == "million":
+#             amount *= 1_000_000
+#         claims_data["claim_amount"] = amount
+
+#     # NEW: Loss amount extraction for catastrophic risks
+#     match = re.search(r"(reported|estimated) losses? of \$([\d\.]+)\s*(billion|million)?", text, re.IGNORECASE)
+#     if match:
+#         amount = float(match.group(2))
+#         unit = match.group(3)
+#         if unit == "billion":
+#             amount *= 1_000_000_000
+#         elif unit == "million":
+#             amount *= 1_000_000
+#         claims_data["loss_amount"] = amount
+
+#     # Existing logic for other fields...
+#     match = re.search(r"loss ratio.*?(\d+)%", text)
+#     if match:
+#         claims_data["loss_ratio"] = int(match.group(1))
+
+#     match = re.search(r"(\d{1,3}(,\d{3})*)\s+claims", text)
+#     if match:
+#         claims_data["volume"] = int(match.group(1).replace(",", ""))
+
+#     if "severity" in text.lower():
+#         claims_data["severity"] = "High"
+
+#     match = re.search(r"especially in ([\w\s]+) professions", text)
+#     if match:
+#         claims_data["profession"] = match.group(1).strip()
+
+#     return claims_data
+
+
+# # =========================
+# # Summarization with Claims Info
+# # =========================
+# def format_for_summary(article: str, claims_data: Dict[str, Optional[str]]) -> str:
+#     return f"""
+# Article:
+# {article}
+
+# Extracted Claims Info:
+# - Claim Amount: {claims_data['claim_amount']}
+# - Loss Ratio: {claims_data['loss_ratio']}%
+# - Volume: {claims_data['volume']} claims
+# - Severity: {claims_data['severity']}
+# - Most Active Profession: {claims_data['profession']}
+
+# Summarize the article with emphasis on the claims-level insights.
+# """
+
+# def hf_summarize(text: str) -> str:
+#     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
+#     payload = {
+#         "inputs": text,
+#         "parameters": {"max_length": 220, "min_length": 80}
+#     }
+#     url = "https://router.huggingface.co/hf-inference/models/facebook/bart-large-cnn"
+#     try:
+#         response = requests.post(url, headers=headers, json=payload, timeout=60)
+#         response.raise_for_status()
+#         data = response.json()
+#         return data[0].get("summary_text", "")
+#     except Exception:
+#         return "Summary generation failed."
+
+# # =========================
+# # Country Detection
+# # =========================
+# def detect_countries(text: str) -> List[str]:
+#     countries = []
+#     for country in pycountry.countries:
+#         if re.search(rf"\b{re.escape(country.name)}\b", text, re.IGNORECASE):
+#             countries.append(country.name)
+#     return countries
+
+
+# # =========================
+# # Deduplication Function
+# # ========================
+
+
+# model = SentenceTransformer('all-MiniLM-L6-v2')  # Lightweight and fast
+
+# def deduplicate_articles_semantic(df, threshold=0.85):
+#     summaries = df['summary'].tolist()
+#     embeddings = model.encode(summaries)
+#     sim_matrix = cosine_similarity(embeddings)
+
+#     keep_indices = []
+#     seen = set()
+#     for i in range(len(summaries)):
+#         if i in seen:
+#             continue
+#         keep_indices.append(i)
+#         for j in range(i+1, len(summaries)):
+#             if sim_matrix[i][j] > threshold:
+#                 seen.add(j)
+#     return df.iloc[keep_indices].reset_index(drop=True)
+
+
+
+# # =========================
+# # Visualization
+# # =========================
+# def plot_claims_map(df: pd.DataFrame):
+#     exploded = df.explode("countries")
+    
+#     exploded["loss_amount"] = exploded["claims"].apply(lambda x: x.get("loss_amount", 0))
+#     grouped = exploded.groupby("countries")["loss_amount"].sum().reset_index()
+
+#     grouped["iso3"] = grouped["countries"].apply(lambda name: pycountry.countries.get(name=name).alpha_3 if pycountry.countries.get(name=name) else None)
+#     grouped = grouped.dropna(subset=["iso3"])
+#     fig = px.choropleth(
+#         grouped,
+#         locations="iso3",
+#         color="loss_amount",
+#         hover_name="countries",
+#         color_continuous_scale="Reds",
+#         title="Reported Loss Amount by Country (Catastrophic Risks)"
+#     )
+#     st.plotly_chart(fig, use_container_width=True)
+
+#     # KPI Cards
+    
+#     total_loss_amount = exploded["loss_amount"].sum()
+#     # col1.metric("Total Reported Loss Amount", f"${total_loss_amount:,.0f}")
+
+#     average_loss_ratio = exploded["claims"].apply(lambda x: x.get("loss_ratio", 0)).mean()
+#     st.subheader("📊 Key Metrics")
+#     col1, col2 = st.columns(2)
+#     col1.metric("Total Reported Claim Amount", f"${total_loss_amount:,.0f}")
+#     col2.metric("Average Loss Ratio", f"{average_loss_ratio:.2f}%")
+
+# # =========================
+# # Streamlit UI
+# # =========================
+# def render_news_feed_insights():
+#     st.title("📰 Claims-Level News Feed Insights")
+    
+#     categories = [
+#         "Operational Error",
+#         "Malicious Activity",
+#         "Natural Disaster",
+#         "Product/Service Failure",
+#         "Injury/Illness"
+#     ]
+#     selected_categories = st.multiselect("Select Incident Categories", categories, default=categories)
+
+#     end_date = datetime.today()
+#     start_date = end_date - timedelta(days=30)
+#     start_str = start_date.strftime('%Y-%m-%d')
+#     end_str = end_date.strftime('%Y-%m-%d')
+#     max_items = st.slider("Max articles per keyword", 1, 10, 5)
+
+#     if st.button("Fetch & Analyze"):
+#         with st.spinner("Fetching articles and generating summaries..."):
+#             er = EventRegistry(apiKey=EVENTREGISTRY_API_KEY)
+#             ret_info = ReturnInfo(
+#                 articleInfo=ArticleInfoFlags(bodyLen=-1, concepts=False, categories=False, authors=True),
+#                 sourceInfo=SourceInfoFlags()
+#             )
+#             rows = []
+#             for category in selected_categories:
+#                 q = QueryArticlesIter(
+#                     keywords=category,
+#                     dateStart=start_str,
+#                     dateEnd=end_str,
+#                     isDuplicateFilter="skipDuplicates",
+#                     lang="eng"
+#                 )
+#                 for art in q.execQuery(er, returnInfo=ret_info, sortBy="date", sortByAsc=False, maxItems=max_items):
+#                     title = art.get("title", "")
+#                     body = art.get("body", "")
+#                     claims = extract_claims_info(body)
+#                     countries = detect_countries(body)
+#                     summary_prompt = format_for_summary(body, claims)
+#                     summary = hf_summarize(summary_prompt)
+#                     rows.append({
+#                         "title": title,
+#                         "date": art.get("dateTime", ""),
+#                         "source": art.get("source", {}).get("title", ""),
+#                         "url": art.get("url", ""),
+#                         "summary": summary,
+#                         "countries": countries,
+#                         "claims": claims
+#                     })
+#             df = pd.DataFrame(rows)
+            
+#             # Remove rows where summary generation failed
+#             df = df[df['summary'] != "Summary generation failed."]
+
+            
+#             # Apply deduplication
+#             if not df.empty:
+#                 df = deduplicate_articles_semantic(df)
+
+#             df = df.drop_duplicates(subset=['countries'])
+
+#             st.success(f"Fetched {len(df)} articles.")
+
+#             st.subheader("Summaries")
+#             for _, row in df.iterrows():
+#                 st.markdown(f"[{row['title']}]({row['url']})")
+#                 st.text_area("Summary", row['summary'], height=150, key=row['url'])
+
+#             # st.subheader("Article Table")
+#             # df_display = df.copy()
+#             # df_display["title"] = df_display.apply(lambda r: f"[{r['title']}]({r['url']})", axis=1)
+#             # st.write(df_display[["title", "date", "source"]].to_html(escape=False, index=False), unsafe_allow_html=True)
+
+#             plot_claims_map(df)
+
+

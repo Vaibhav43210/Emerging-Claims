@@ -5,6 +5,8 @@ import plotly.express as px
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 from news_feed import render_news_feed_insights
+from test_news import render_event_dashboard
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 st.set_page_config(layout="wide")
 
@@ -17,7 +19,8 @@ model_options = {
 }
 # selected_model = st.sidebar.selectbox("Select NLP Model", list(model_options.keys()))
 # API_URL = f"https://router.huggingface.co/hf-inference/models/{model_options[selected_model]}"
-API_URL = f"https://router.huggingface.co/hf-inference/models/facebook/bart-large-mnli"
+# API_URL = f"https://router.huggingface.co/hf-inference/models/facebook/bart-large-mnli"
+API_URL = f"https://router.huggingface.co/hf-inference/models/valhalla/distilbart-mnli-12-3"
 
 # Hugging Face API key
 api_key = st.secrets.get("HUGGINGFACE_API_KEY") if hasattr(st, "secrets") else os.environ.get("HUGGINGFACE_API_KEY")
@@ -27,7 +30,8 @@ if not api_key:
 headers = {"Authorization": f"Bearer {api_key}"}
 
 # Candidate labels
-candidate_labels = ["Cyber", "Water", "Professional Negligence", "Injured/Illness", "Malicious Damage", "Fire"]
+# candidate_labels = ["Cyber", "Natural Disaster", "Professional Negligence", "Injured/Illness", "Malicious Damage", "Fire"]
+candidate_labels = ['Operational Error',  'Malicious Activity', 'Natural Disaster', 'Product/Service Failure' , 'Injury/Illness']
 
 # Human-readable currency/count formatter
 def human_currency(n):
@@ -59,8 +63,11 @@ def human_count(n):
     # integer if small
     return f"{int(n)}"
 
+
 # Query function
 def query_model(text, retries=2, timeout=90):
+    # candidate_labels = generate_candidate_labels(text)
+    # print(f"Generated candidate labels: {candidate_labels}")
     payload = {"inputs": text, "parameters": {"candidate_labels": candidate_labels}}
     for attempt in range(retries + 1):
         try:
@@ -87,7 +94,7 @@ def query_model(text, retries=2, timeout=90):
 # Streamlit app setup
 
 st.title("Emerging Risk Intelligence Engine")
-tabs = st.tabs(["Data Load", "NLP Inference", "Risk Analysis", "Dimensional YOY Comparison", "Summarized Newsletter", "Emerging News Feed"])
+tabs = st.tabs(["Data Load", "Risk Category", "Risk Analysis", "Dimensional YOY Comparison", "Summarized Newsletter", "Emerging News Feed"])
 
 # Tab 1: Data Load
 with tabs[0]:
@@ -99,45 +106,149 @@ with tabs[0]:
         st.dataframe(df.head(10))
 
 # Tab 2: NLP Inference
+# with tabs[1]:
+#     if "df" in st.session_state:
+#         df = st.session_state.df
+#         num_claims = st.slider("Select number of claims to process", min_value=1, max_value=100, value=50, step=5)
+#         if st.button("Get Emerging Risk Categories"):
+#             with st.spinner("Getting Categories..."):
+#                 results = []
+#                 progress = st.progress(0)
+#                 for i, row in df.head(num_claims).iterrows():
+#                     desc = row['Claims_Description']
+#                     claim_id = row['Claim_ID']
+#                     prediction = query_model(desc)
+#                     print(f"Processed Claim ID {claim_id}: {prediction}")
+#                     if isinstance(prediction, dict) and prediction.get("error"):
+#                         label = "Error"
+#                         score = 0.0
+#                         print(f"Model error for Claim {claim_id}: {prediction['error']}")
+#                     elif isinstance(prediction, list) and len(prediction) > 0:
+#                         label = prediction[0]['label']
+#                         score = prediction[0]['score']
+
+#                         print(f"Claim ID {claim_id} classified as {label} with score {score}")
+#                     else:
+#                         label = "Error"
+#                         score = 0.0
+#                         print(f"Unexpected model response for Claim ID {claim_id}: {prediction}")
+#                     results.append({
+#                         "Claim_ID": claim_id,
+#                         "Claims_Description": desc,
+#                         "Emerging_Risk_Category": label,
+#                         "Confidence_Score": round(score, 2)
+#                     })
+#                     progress.progress((i + 1) / num_claims)
+#                 result_df = pd.DataFrame(results)
+#                 st.session_state.result_df = result_df
+#                 st.write("### NLP Classification Results")
+#                 st.dataframe(result_df)
+#     else:
+#         st.warning("Please upload data in Tab 1")
+
+
+@st.cache_data(show_spinner=False)
+def cached_query_model(description):
+    return query_model(description)
+
+
+def process_claim(row):
+    desc = row['Claims_Description']
+    claim_id = row['Claim_ID']
+    prediction = cached_query_model(desc)
+
+    if isinstance(prediction, dict) and prediction.get("error"):
+        label = "Error"
+        score = 0.0
+    elif isinstance(prediction, list) and len(prediction) > 0:
+        label = prediction[0]['label']
+        score = prediction[0]['score']
+    else:
+        label = "Error"
+        score = 0.0
+
+    return {
+        "Claim_ID": claim_id,
+        "Claims_Description": desc,
+        "Emerging_Risk_Category": label,
+        "Confidence_Score": round(score, 2)
+    }
+
 with tabs[1]:
     if "df" in st.session_state:
         df = st.session_state.df
-        num_claims = st.slider("Select number of claims to process", min_value=1, max_value=100, value=50, step=5)
-        if st.button("Run NLP Classification"):
-            with st.spinner("Running NLP classification..."):
-                results = []
-                progress = st.progress(0)
-                for i, row in df.head(num_claims).iterrows():
-                    desc = row['Claims_Description']
-                    claim_id = row['Claim_ID']
-                    prediction = query_model(desc)
-                    print(f"Processed Claim ID {claim_id}: {prediction}")
-                    if isinstance(prediction, dict) and prediction.get("error"):
-                        label = "Error"
-                        score = 0.0
-                        print(f"Model error for Claim {claim_id}: {prediction['error']}")
-                    elif isinstance(prediction, list) and len(prediction) > 0:
-                        label = prediction[0]['label']
-                        score = prediction[0]['score']
+        df_subset = df.head(1000)  # Select only first 50 claims
 
-                        print(f"Claim ID {claim_id} classified as {label} with score {score}")
-                    else:
-                        label = "Error"
-                        score = 0.0
-                        print(f"Unexpected model response for Claim ID {claim_id}: {prediction}")
-                    results.append({
-                        "Claim_ID": claim_id,
-                        "Claims_Description": desc,
-                        "Emerging_Risk_Category": label,
-                        "Confidence_Score": round(score, 2)
-                    })
-                    progress.progress((i + 1) / num_claims)
+        if st.button("Get Emerging Risk Categories for 1000 Claims only"):
+            with st.spinner("Processing 1000 claims..."):
+                total_claims = len(df)
+                rows = [row for _, row in df_subset.iterrows()]
+                results = []
+
+                progress_placeholder = st.empty()
+                progress_bar = progress_placeholder.progress(0)
+
+                # Parallel + Cached
+                with ThreadPoolExecutor(max_workers=100) as executor:
+                    futures = {executor.submit(process_claim, row): idx for idx, row in enumerate(rows)}
+                    for i, future in enumerate(as_completed(futures)):
+                        result = future.result()
+                        results.append(result)
+                        progress_bar.progress((i + 1) / len(rows))
+
                 result_df = pd.DataFrame(results)
-                st.session_state.result_df = result_df
-                st.write("### NLP Classification Results")
-                st.dataframe(result_df)
+                
+                # Sort the result_df by Confidence_Score in descending order
+                sorted_df = result_df.sort_values(by="Confidence_Score", ascending=False)
+
+                st.session_state.result_df = sorted_df
+
+                st.write("### Emerging Categories Results")
+                st.dataframe(sorted_df.drop_duplicates(subset=['Claims_Description']).head(10))
+
+                st.download_button(
+                    label="Download Top 1000 Results",
+                    data=sorted_df.to_csv(index=False),
+                    file_name="1000claimsonly.csv",
+                    mime="text/csv"
+                )
+        if st.button("Get Emerging Risk Categories for All Claims"):
+                with st.spinner("Processing all claims..."):
+                    total_claims = len(df)
+                    rows = [row for _, row in df.iterrows()]
+                    results = []
+
+                    progress_placeholder = st.empty()
+                    progress_bar = progress_placeholder.progress(0)
+
+                    # Parallel + Cached
+                    with ThreadPoolExecutor(max_workers=100) as executor:
+                        futures = {executor.submit(process_claim, row): idx for idx, row in enumerate(rows)}
+                        for i, future in enumerate(as_completed(futures)):
+                            result = future.result()
+                            results.append(result)
+                            progress_bar.progress((i + 1) / len(rows))
+
+                    result_df = pd.DataFrame(results)
+                    # Sort the result_df by Confidence_Score in descending order
+                    sorted_df = result_df.sort_values(by="Confidence_Score", ascending=False)
+
+                    st.session_state.result_df = sorted_df
+                    # st.session_state.result_df = result_df
+
+                    st.write("### Emerging Categories Results")
+                    st.dataframe(sorted_df.drop_duplicates(subset=['Claims_Description']).head(10))
+
+                    st.download_button(
+                        label="Download All Results",
+                        data=sorted_df.to_csv(index=False),
+                        file_name="All_claims.csv",
+                        mime="text/csv"
+                    )
     else:
-        st.warning("Please upload data in Tab 1")
+        st.warning("Please upload data in Data Upload Tab")
+
+
 
 
 # Tab 3: Risk Analysis (Merged)
@@ -250,6 +361,7 @@ with tabs[2]:
         fig_ratio.update_yaxes(tickformat=".0%")
         st.plotly_chart(fig_ratio, use_container_width=True)
 
+        
         # Chart: Year-on-Year by Emerging Risk Category
         if not category_agg.empty:
             fig_cat = px.bar(category_agg, x="Year", y="Claim_Count", color="Emerging_Risk_Category",
@@ -258,16 +370,96 @@ with tabs[2]:
             st.plotly_chart(fig_cat, use_container_width=True)
 
     else:
-        st.warning("Please upload data in Tab 1")
+        st.warning("Please upload data in Data Tab")
+
+# # Tab 4: Visualization
+# with tabs[3]:
+#     if "df" in st.session_state:
+#         df = st.session_state.df
+#         st.subheader("WordClouds & Year-on-Year Comparison")
+
+#         # Only show WordCloud UI when there is at least one non-null category
+#         if 'Claims_Description' in df.columns and 'Emerging_Risk_Category' in df.columns:
+#             categories = df['Emerging_Risk_Category'].dropna().unique().tolist()
+#             if categories:
+#                 selected_category = st.selectbox("Select Category for WordCloud", categories)
+#                 text = " ".join(df[df['Emerging_Risk_Category'] == selected_category]['Claims_Description'].dropna().astype(str))
+#                 if text.strip():
+#                     try:
+#                         wc = WordCloud(width=800, height=400, background_color='white').generate(text)
+#                         fig_wc, ax = plt.subplots()
+#                         ax.imshow(wc, interpolation='bilinear')
+#                         ax.axis("off")
+#                         st.pyplot(fig_wc)
+#                     except ValueError:
+#                         st.info("Not enough text to generate a word cloud for the selected category.")
+#                 else:
+#                     st.info("No claim descriptions available for the selected category to generate a word cloud.")
+#             else:
+#                 st.info("No Emerging Risk Categories available. Run NLP Inference in Tab 2 first.")
+
+#         # Year-on-year: fill missing categories with 'Uncategorized' to ensure grouping works
+#         yoy_df = df.copy()
+#         # if 'Emerging_Risk_Category' not in yoy_df.columns:
+#         #     yoy_df['Emerging_Risk_Category'] = 'Uncategorized'
+#         # else:
+#         #     yoy_df['Emerging_Risk_Category'] = yoy_df['Emerging_Risk_Category'].fillna('Uncategorized')
+#         if 'Year' not in yoy_df.columns:
+#             yoy_df['Year'] = pd.to_datetime(yoy_df.get('Claim_Date', pd.Series())).dt.year
+#         yoy_df = yoy_df.groupby(['Year', 'Emerging_Risk_Category']).agg({'Claim_ID': 'count'}).reset_index()
+#         fig_yoy = px.bar(yoy_df, x='Year', y='Claim_ID', color='Emerging_Risk_Category',
+#                                title='Year-on-Year Claim Count by Emerging Risk Category', barmode='group')
+#         fig_yoy.update_yaxes(tickformat=".2s")
+#         st.plotly_chart(fig_yoy, use_container_width=True)
+
+#         # Sunburst Chart
+#         # viz_df = df.copy()    
+#         # viz_df['Year'] = pd.to_datetime(viz_df.get('Claim_Date', pd.Series()), errors='coerce').dt.year
+#         # print(viz_df)
+#         # # # Group data
+#         # sunburst_df = viz_df.groupby(['Year', 'Emerging_Risk_Category']).size().reset_index(name='Count')
+
+#         # # # Validate before plotting
+#         # if not sunburst_df.empty and sunburst_df['Year'].notna().any() and sunburst_df['Emerging_Risk_Category'].notna().any():
+#         #     fig_sunburst = px.sunburst(
+#         #         sunburst_df,
+#         #         path=['Year', 'Emerging_Risk_Category'],
+#         #         values='Count',
+#         #         title='Risk Category Distribution by Year'
+#         #     )
+#         #     st.plotly_chart(fig_sunburst, use_container_width=True)
+#         # else:
+#         #     st.warning("No valid data available for Sunburst chart.")
+
+
+#         # # Treemap
+#         # treemap_df = viz_df.groupby(['Year', 'Emerging_Risk_Category']).agg({'Final_Settled_Amount': 'sum'}).reset_index()
+#         # fig_treemap = px.treemap(treemap_df, path=['Year', 'Emerging_Risk_Category'], values='Final_Settled_Amount',
+#         #                          title='Settled Amount by Risk Category and Year')
+#         # st.plotly_chart(fig_treemap, use_container_width=True)
+
+#         # # Animated Bar Chart
+#         # animated_df = viz_df.groupby(['Year', 'Emerging_Risk_Category']).size().reset_index(name='Claim_Count')
+#         # fig_animated = px.bar(animated_df, x='Emerging_Risk_Category', y='Claim_Count', color='Emerging_Risk_Category',
+#         #                       animation_frame='Year', title='YOY Claim Count by Risk Category')
+#         # st.plotly_chart(fig_animated, use_container_width=True)
+#     else:
+#         st.warning("Please upload data in Data Tab")
 
 # Tab 4: Visualization
 with tabs[3]:
     if "df" in st.session_state:
         df = st.session_state.df
+
+        # ✅ Guard clause to wait for NLP inference
+        if 'Emerging_Risk_Category' not in df.columns or df['Emerging_Risk_Category'].dropna().empty:
+            st.warning("Waiting for NLP inference. Please run it in Tab 2 to view visualizations.")
+            st.stop()
+
         st.subheader("WordClouds & Year-on-Year Comparison")
 
-        # Only show WordCloud UI when there is at least one non-null category
-        if 'Claims_Description' in df.columns and 'Emerging_Risk_Category' in df.columns:
+        # ✅ WordCloud
+        if 'Claims_Description' in df.columns:
             categories = df['Emerging_Risk_Category'].dropna().unique().tolist()
             if categories:
                 selected_category = st.selectbox("Select Category for WordCloud", categories)
@@ -286,21 +478,45 @@ with tabs[3]:
             else:
                 st.info("No Emerging Risk Categories available. Run NLP Inference in Tab 2 first.")
 
-        # Year-on-year: fill missing categories with 'Uncategorized' to ensure grouping works
+        # ✅ Year-on-Year Bar Chart
         yoy_df = df.copy()
-        # if 'Emerging_Risk_Category' not in yoy_df.columns:
-        #     yoy_df['Emerging_Risk_Category'] = 'Uncategorized'
-        # else:
-        #     yoy_df['Emerging_Risk_Category'] = yoy_df['Emerging_Risk_Category'].fillna('Uncategorized')
         if 'Year' not in yoy_df.columns:
-            yoy_df['Year'] = pd.to_datetime(yoy_df.get('Claim_Date', pd.Series())).dt.year
+            yoy_df['Year'] = pd.to_datetime(yoy_df.get('Claim_Date', pd.Series()), errors='coerce').dt.year
         yoy_df = yoy_df.groupby(['Year', 'Emerging_Risk_Category']).agg({'Claim_ID': 'count'}).reset_index()
         fig_yoy = px.bar(yoy_df, x='Year', y='Claim_ID', color='Emerging_Risk_Category',
-                               title='Year-on-Year Claim Count by Emerging Risk Category', barmode='group')
+                         title='Year-on-Year Claim Count by Emerging Risk Category', barmode='group')
         fig_yoy.update_yaxes(tickformat=".2s")
         st.plotly_chart(fig_yoy, use_container_width=True)
+
+        # ✅ Sunburst Chart
+        viz_df = df.copy()
+        viz_df['Year'] = pd.to_datetime(viz_df.get('Claim_Date', pd.Series()), errors='coerce').dt.year
+        sunburst_df = viz_df.groupby(['Year', 'Emerging_Risk_Category']).size().reset_index(name='Count')
+        if not sunburst_df.empty and sunburst_df['Year'].notna().any() and sunburst_df['Emerging_Risk_Category'].notna().any():
+            fig_sunburst = px.sunburst(
+                sunburst_df,
+                path=['Year', 'Emerging_Risk_Category'],
+                values='Count',
+                title='Risk Category Distribution by Year'
+            )
+            st.plotly_chart(fig_sunburst, use_container_width=True)
+        else:
+            st.warning("No valid data available for Sunburst chart.")
+
+        # ✅ Treemap
+        treemap_df = viz_df.groupby(['Year', 'Emerging_Risk_Category']).agg({'Final_Settled_Amount': 'sum'}).reset_index()
+        fig_treemap = px.treemap(treemap_df, path=['Year', 'Emerging_Risk_Category'], values='Final_Settled_Amount',
+                                 title='Settled Amount by Risk Category and Year')
+        st.plotly_chart(fig_treemap, use_container_width=True)
+
+        # ✅ Animated Bar Chart
+        animated_df = df.groupby(['Year', 'Emerging_Risk_Category']).size().reset_index(name='Claim_Count')
+        fig_animated = px.bar(animated_df, x='Emerging_Risk_Category', y='Claim_Count', color='Emerging_Risk_Category',
+                              animation_frame='Year', title='YOY Claim Count by Risk Category')
+        st.plotly_chart(fig_animated, use_container_width=True)
     else:
         st.warning("Please upload data in Tab 1")
+
 
 # Tab 5: Insights (LLM-enhanced newsletter)
 with tabs[4]:
@@ -393,3 +609,4 @@ with tabs[4]:
 with tabs[5]:
     st.subheader("News Feed Insights")
     render_news_feed_insights()
+    # render_event_dashboard(api_key=st.secrets.get("EVENTREGISTRY_API_KEY") if hasattr(st, "secrets") else os.environ.get("EVENTREGISTRY_API_KEY"))
