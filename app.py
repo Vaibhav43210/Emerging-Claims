@@ -5,7 +5,6 @@ import plotly.express as px
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 from news_feed import render_news_feed_insights
-from test_news import render_event_dashboard
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 st.set_page_config(layout="wide")
