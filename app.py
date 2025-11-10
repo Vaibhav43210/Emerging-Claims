@@ -103,6 +103,7 @@ with tabs[0]:
     uploaded_file = st.file_uploader("Upload Claims Excel File", type="xlsx")
     if uploaded_file:
         df = pd.read_excel(uploaded_file, sheet_name="emerging_risk_claims", engine="openpyxl")
+        df = df[df['Claim_Date'].dt.year != 2026]  # Filter from 2015 onwards
         st.session_state.df = df
         st.write("### Preview of Claims Data")
         st.dataframe(df.head(10))
@@ -399,6 +400,13 @@ with tabs[2]:
         st.write("### Aggregated Summary - Year x Emerging Risk Category")
         
         
+        
+        # ✅ Aggregate by Year for a single line
+        agg_by_year = category_agg.groupby('Year').agg({
+            'Reported_Loss_Amount': 'sum',
+            'Final_Settled_Amount': 'sum',
+            'Claim_Count': 'sum'
+        }).reset_index()
 
 
         # Create figure
@@ -406,23 +414,23 @@ with tabs[2]:
 
         # Add stacked bars for monetary metrics (overall totals per year)
         fig_combined.add_trace(go.Bar(
-            x=category_agg['Year'],
-            y=category_agg['Reported_Loss_Amount'],
+            x=agg_by_year['Year'],
+            y=agg_by_year['Reported_Loss_Amount'],
             name="Reported Loss",
             marker_color='lightblue'
         ))
 
         fig_combined.add_trace(go.Bar(
-            x=category_agg['Year'],
-            y=category_agg['Final_Settled_Amount'],
+            x=agg_by_year['Year'],
+            y=agg_by_year['Final_Settled_Amount'],
             name="Final Settled Amount",
             marker_color='steelblue'
         ))
 
         # Add line for Claim Count
         fig_combined.add_trace(go.Scatter(
-            x=category_agg['Year'],
-            y=category_agg['Claim_Count'],
+            x=agg_by_year['Year'],
+            y=agg_by_year['Claim_Count'],
             name="Claim Count",
             mode='lines',
             yaxis='y2',
