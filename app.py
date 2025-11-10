@@ -424,8 +424,10 @@ with tabs[2]:
             x=category_agg['Year'],
             y=category_agg['Claim_Count'],
             name="Claim Count",
-            mode='lines+markers',
-            yaxis='y2'
+            mode='lines',
+            yaxis='y2',
+            line=dict(color='darkorange', width=3)
+
         ))
 
         # Layout with secondary y-axis
