@@ -2,9 +2,11 @@ import streamlit as st
 import pandas as pd
 import requests, os, time
 import plotly.express as px
+import plotly.graph_objects as go
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
-from news_feed import render_news_feed_insights
+# from news_feed import generate_combined_category_summary , _fetch_news_df, DEFAULT_KEYWORDS, DEFAULT_START_DATE, DEFAULT_END_DATE, DEFAULT_MAX_PER_KEYWORD
+# render_news_feed_insights
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 st.set_page_config(layout="wide")
@@ -93,7 +95,8 @@ def query_model(text, retries=2, timeout=90):
 # Streamlit app setup
 
 st.title("Emerging Risk Intelligence Engine")
-tabs = st.tabs(["Data Load", "Risk Category", "Risk Analysis", "Dimensional YOY Comparison", "Summarized Newsletter", "Emerging News Feed"])
+tabs = st.tabs(["Data Load", "Risk Category", "Risk Analysis", "Dimensional YOY Comparison"])
+                # , "Summarized Newsletter"])
 
 # Tab 1: Data Load
 with tabs[0]:
@@ -173,21 +176,57 @@ def process_claim(row):
         "Confidence_Score": round(score, 2)
     }
 
+
 with tabs[1]:
     if "df" in st.session_state:
         df = st.session_state.df
-        df_subset = df.head(1000)  # Select only first 50 claims
 
-        if st.button("Get Emerging Risk Categories for 1000 Claims only"):
-            with st.spinner("Processing 1000 claims..."):
-                total_claims = len(df)
-                rows = [row for _, row in df_subset.iterrows()]
+        
+        # Extract unique LOBs
+        lobs = sorted(df['LOB'].dropna().unique())
+        selected_lobs = st.multiselect("Select Lines of Business (LOB)", lobs, default=lobs, key="lob_tab_1")
+
+        # Apply LOB filter
+        df = df[df['LOB'].isin(selected_lobs)]
+
+
+        # ✅ Automatically process first 1000 claims
+        st.info("Automatically processing first 1000 claims for Emerging Risk Categories...")
+        with st.spinner("Processing 1000 claims..."):
+            df_subset = df.head(1000)
+            rows = [row for _, row in df_subset.iterrows()]
+            results = []
+            progress_placeholder = st.empty()
+            progress_bar = progress_placeholder.progress(0)
+
+            with ThreadPoolExecutor(max_workers=100) as executor:
+                futures = {executor.submit(process_claim, row): idx for idx, row in enumerate(rows)}
+                for i, future in enumerate(as_completed(futures)):
+                    result = future.result()
+                    results.append(result)
+                    progress_bar.progress((i + 1) / len(rows))
+
+            result_df = pd.DataFrame(results)
+            sorted_df = result_df.sort_values(by="Confidence_Score", ascending=False)
+            st.session_state.result_df = sorted_df
+
+            st.write("### Emerging Categories Results (Top 1000 Claims)")
+            st.dataframe(sorted_df.drop_duplicates(subset=['Claims_Description']).head(10))
+            st.download_button(
+                label="Download Top 1000 Results",
+                data=sorted_df.to_csv(index=False),
+                file_name="1000_claims.csv",
+                mime="text/csv"
+            )
+
+        # ✅ Button for processing all claims
+        if st.button("Get Emerging Risk Categories for All Claims"):
+            with st.spinner("Processing all claims..."):
+                rows = [row for _, row in df.iterrows()]
                 results = []
-
                 progress_placeholder = st.empty()
                 progress_bar = progress_placeholder.progress(0)
 
-                # Parallel + Cached
                 with ThreadPoolExecutor(max_workers=100) as executor:
                     futures = {executor.submit(process_claim, row): idx for idx, row in enumerate(rows)}
                     for i, future in enumerate(as_completed(futures)):
@@ -196,56 +235,41 @@ with tabs[1]:
                         progress_bar.progress((i + 1) / len(rows))
 
                 result_df = pd.DataFrame(results)
-                
-                # Sort the result_df by Confidence_Score in descending order
                 sorted_df = result_df.sort_values(by="Confidence_Score", ascending=False)
-
                 st.session_state.result_df = sorted_df
 
-                st.write("### Emerging Categories Results")
+                st.write("### Emerging Categories Results (All Claims)")
                 st.dataframe(sorted_df.drop_duplicates(subset=['Claims_Description']).head(10))
-
                 st.download_button(
-                    label="Download Top 1000 Results",
+                    label="Download All Results",
                     data=sorted_df.to_csv(index=False),
-                    file_name="1000claimsonly.csv",
+                    file_name="all_claims.csv",
                     mime="text/csv"
                 )
-        if st.button("Get Emerging Risk Categories for All Claims"):
-                with st.spinner("Processing all claims..."):
-                    total_claims = len(df)
-                    rows = [row for _, row in df.iterrows()]
-                    results = []
 
-                    progress_placeholder = st.empty()
-                    progress_bar = progress_placeholder.progress(0)
-
-                    # Parallel + Cached
-                    with ThreadPoolExecutor(max_workers=100) as executor:
-                        futures = {executor.submit(process_claim, row): idx for idx, row in enumerate(rows)}
-                        for i, future in enumerate(as_completed(futures)):
-                            result = future.result()
-                            results.append(result)
-                            progress_bar.progress((i + 1) / len(rows))
-
-                    result_df = pd.DataFrame(results)
-                    # Sort the result_df by Confidence_Score in descending order
-                    sorted_df = result_df.sort_values(by="Confidence_Score", ascending=False)
-
-                    st.session_state.result_df = sorted_df
-                    # st.session_state.result_df = result_df
-
-                    st.write("### Emerging Categories Results")
-                    st.dataframe(sorted_df.drop_duplicates(subset=['Claims_Description']).head(10))
-
-                    st.download_button(
-                        label="Download All Results",
-                        data=sorted_df.to_csv(index=False),
-                        file_name="All_claims.csv",
-                        mime="text/csv"
-                    )
+        # ✅ WordCloud Section (moved from Tab 4)
+        st.subheader("WordCloud for Emerging Risk Categories")
+        if "result_df" in st.session_state:
+            categories = sorted_df['Emerging_Risk_Category'].dropna().unique().tolist()
+            if categories:
+                selected_category = st.selectbox("Select Category for WordCloud", categories)
+                text = " ".join(sorted_df[sorted_df['Emerging_Risk_Category'] == selected_category]['Claims_Description'].dropna().astype(str))
+                if text.strip():
+                    try:
+                        wc = WordCloud(width=800, height=400, background_color='white').generate(text)
+                        fig_wc, ax = plt.subplots()
+                        ax.imshow(wc, interpolation='bilinear')
+                        ax.axis("off")
+                        st.pyplot(fig_wc)
+                    except ValueError:
+                        st.info("Not enough text to generate a word cloud for the selected category.")
+                else:
+                    st.info("No claim descriptions available for the selected category.")
+            else:
+                st.info("No Emerging Risk Categories available yet.")
     else:
         st.warning("Please upload data in Data Upload Tab")
+
 
 
 
@@ -254,6 +278,16 @@ with tabs[1]:
 with tabs[2]:
     if "df" in st.session_state:
         df = st.session_state.df
+        
+          # Extract unique LOBs
+        lobs = sorted(df['LOB'].dropna().unique())
+        selected_lobs = st.multiselect("Select Lines of Business (LOB)", lobs, default=lobs, key="lob_tab_2")
+
+        # Apply LOB filter
+        df = df[df['LOB'].isin(selected_lobs)]
+
+        # Apply filter
+        # df = df[df['Product_Line'].isin(selected_products)]
 
         # If NLP results exist from Tab 2, merge Emerging Risk Category & Confidence
         if "result_df" in st.session_state:
@@ -310,12 +344,12 @@ with tabs[2]:
         avg_loss_ratio = filtered_df['Loss_Ratio'].mean()
 
         st.write("### Key KPIs")
-        col1, col2, col3, col4, col5 = st.columns(5)
+        col1, col2, col3, col4 = st.columns(4)
         col1.metric("Total Claims", human_count(total_claims))
         col2.metric("Reported Loss", human_currency(total_reported_loss))
         col3.metric("Settled Amount", human_currency(total_settled))
         col4.metric("Recovery Amount", human_currency(total_recovery))
-        col5.metric("Avg Loss Ratio", f"{avg_loss_ratio:.2%}" if not pd.isna(avg_loss_ratio) else "N/A")
+        # col5.metric("Incurred Loss Ratio", f"{avg_loss_ratio:.2%}" if not pd.isna(avg_loss_ratio) else "N/A")
 
         # Aggregated Summary: yearly totals and Year x Emerging Risk Category breakdown
         yearly_agg = filtered_df.groupby("Year").agg({
@@ -323,10 +357,10 @@ with tabs[2]:
             "Reported_Loss_Amount": "sum",
             "Final_Settled_Amount": "sum",
             "Recovery_Amount": "sum",
-            "Net_Loss": "sum",
-            "Loss_Ratio": "mean"
+            "Net_Loss": "sum"
+            # "Loss_Ratio": "mean"
         }).reset_index()
-        yearly_agg.columns = ["Year", "Claim_Count", "Total_Reported_Loss", "Total_Settled", "Total_Recovery", "Total_Net_Loss", "Avg_Loss_Ratio"]
+        yearly_agg.columns = ["Year", "Claim Count", "Total Reported Loss", "Total Settled", "Total Recovery", "Total Net Loss"]
 
         category_agg = filtered_df.groupby(["Year", "Emerging_Risk_Category"]).agg({
             "Claim_ID": "count",
@@ -335,30 +369,140 @@ with tabs[2]:
         }).reset_index().rename(columns={"Claim_ID": "Claim_Count"})
 
         st.write("### Aggregated Summary - Yearly Totals")
-        st.dataframe(yearly_agg)
-        st.download_button("Download Yearly Aggregated Summary", yearly_agg.to_csv(index=False), "yearly_aggregated_summary.csv")
+        
+        
+
+        # ✅ Replace table with multi-line chart
+        melted = yearly_agg.melt(id_vars="Year", var_name="Metric", value_name="Value")
+
+        fig_yearly_metrics = px.line(
+            melted,
+            x="Year",
+            y="Value",
+            color="Metric",
+            title="Year-wise Metrics Overview",
+            markers=True
+        )
+
+        # ✅ Format Year axis (no commas) and add pound symbol for monetary values
+        fig_yearly_metrics.update_yaxes(tickprefix="£")
+        fig_yearly_metrics.update_layout(
+            xaxis=dict(tickformat="d"),
+            yaxis_title="Value",
+            legend_title="Metric"
+        )
+
+        st.plotly_chart(fig_yearly_metrics, use_container_width=True)
+
+        # st.download_button("Download Yearly Aggregated Summary", yearly_agg.to_csv(index=False), "yearly_aggregated_summary.csv")
 
         st.write("### Aggregated Summary - Year x Emerging Risk Category")
-        st.dataframe(category_agg)
-        st.download_button("Download Category Aggregated Summary", category_agg.to_csv(index=False), "category_aggregated_summary.csv")
+        
+        
+
+
+        # Create figure
+        fig_combined = go.Figure()
+
+        # Add stacked bars for monetary metrics (overall totals per year)
+        fig_combined.add_trace(go.Bar(
+            x=category_agg['Year'],
+            y=category_agg['Reported_Loss_Amount'],
+            name="Reported Loss",
+            marker_color='lightblue'
+        ))
+
+        fig_combined.add_trace(go.Bar(
+            x=category_agg['Year'],
+            y=category_agg['Final_Settled_Amount'],
+            name="Final Settled Amount",
+            marker_color='steelblue'
+        ))
+
+        # Add line for Claim Count
+        fig_combined.add_trace(go.Scatter(
+            x=category_agg['Year'],
+            y=category_agg['Claim_Count'],
+            name="Claim Count",
+            mode='lines+markers',
+            yaxis='y2'
+        ))
+
+        # Layout with secondary y-axis
+        fig_combined.update_layout(
+            title="Stacked Amounts with Claim Count Line",
+            barmode='stack',
+            xaxis=dict(type='category', title='Year'),
+            yaxis=dict(title='Amount (£)', tickprefix='£', tickformat='.2s'),
+            yaxis2=dict(title='Claim Count', overlaying='y', side='right'),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+        )
+
+
+        # Format axes
+        fig_combined.update_layout(xaxis=dict(tickformat="d"))
+        # fig_stacked_metrics.update_yaxes(tickprefix="£")
+
+        st.plotly_chart(fig_combined, use_container_width=True)
+
+        # st.download_button("Download Category Aggregated Summary", category_agg.to_csv(index=False), "category_aggregated_summary.csv")
 
         # Charts
         st.write("### Interactive Charts")
-        fig_claim = px.bar(yearly_agg, x="Year", y="Total_Settled", title="Claim Volume Over Years")
-        fig_claim.update_yaxes(tickformat=".2s", tickprefix="$")
+        
+        fig_claim = px.bar(
+            yearly_agg,
+            x="Year",
+            y="Total Settled",
+            title="Claim Volume Over Years"
+        )
+
+        # Ensure Year axis shows integers (no decimals) and format monetary values
+        fig_claim.update_layout(
+            xaxis=dict(type="category", tickformat="d"),  # Treat Year as categorical
+        )
+        fig_claim.update_yaxes(tickprefix="£", tickformat=".2s")
+
         st.plotly_chart(fig_claim, use_container_width=True)
 
-        fig_recovery = px.line(yearly_agg, x="Year", y="Total_Recovery", title="Recovery Amount Over Years", markers=True)
-        fig_recovery.update_yaxes(tickformat=".2s", tickprefix="$")
+
+        
+        # Recovery Amount Over Years
+        fig_recovery = px.line(
+            yearly_agg,
+            x="Year",
+            y="Total Recovery",
+            title="Recovery Amount Over Years",
+            markers=True
+        )
+        fig_recovery.update_layout(xaxis=dict(type="category", tickformat="d"))
+        fig_recovery.update_yaxes(tickprefix="£", tickformat=".2s")
         st.plotly_chart(fig_recovery, use_container_width=True)
 
-        fig_loss = px.line(yearly_agg, x="Year", y="Total_Reported_Loss", title="Reported Loss Amount Over Years", markers=True)
-        fig_loss.update_yaxes(tickformat=".2s", tickprefix="$")
+        # Reported Loss Amount Over Years
+        fig_loss = px.line(
+            yearly_agg,
+            x="Year",
+            y="Total Reported Loss",
+            title="Reported Loss Amount Over Years",
+            markers=True
+        )
+        fig_loss.update_layout(xaxis=dict(type="category", tickformat="d"))
+        fig_loss.update_yaxes(tickprefix="£", tickformat=".2s")
         st.plotly_chart(fig_loss, use_container_width=True)
 
-        fig_ratio = px.line(yearly_agg, x="Year", y="Avg_Loss_Ratio", title="Average Loss Ratio Over Years", markers=True)
-        fig_ratio.update_yaxes(tickformat=".0%")
-        st.plotly_chart(fig_ratio, use_container_width=True)
+        # Average Loss Ratio Over Years
+        # fig_ratio = px.line(
+        #     yearly_agg,
+        #     x="Year",
+        #     y="Avg_Loss_Ratio",
+        #     title="Average Loss Ratio Over Years",
+        #     markers=True
+        # )
+        # fig_ratio.update_layout(xaxis=dict(type="category", tickformat="d"))
+        # fig_ratio.update_yaxes(tickformat=".0%")
+        # st.plotly_chart(fig_ratio, use_container_width=True)
+
 
         
         # Chart: Year-on-Year by Emerging Risk Category
@@ -450,6 +594,14 @@ with tabs[3]:
     if "df" in st.session_state:
         df = st.session_state.df
 
+                
+                # Extract unique LOBs
+        lobs = sorted(df['LOB'].dropna().unique())
+        selected_lobs = st.multiselect("Select Lines of Business (LOB)", lobs, default=lobs, key="lob_tab_3")
+
+        # Apply LOB filter
+        df = df[df['LOB'].isin(selected_lobs)]
+
         # ✅ Guard clause to wait for NLP inference
         if 'Emerging_Risk_Category' not in df.columns or df['Emerging_Risk_Category'].dropna().empty:
             st.warning("Waiting for NLP inference. Please run it in Tab 2 to view visualizations.")
@@ -460,22 +612,22 @@ with tabs[3]:
         # ✅ WordCloud
         if 'Claims_Description' in df.columns:
             categories = df['Emerging_Risk_Category'].dropna().unique().tolist()
-            if categories:
-                selected_category = st.selectbox("Select Category for WordCloud", categories)
-                text = " ".join(df[df['Emerging_Risk_Category'] == selected_category]['Claims_Description'].dropna().astype(str))
-                if text.strip():
-                    try:
-                        wc = WordCloud(width=800, height=400, background_color='white').generate(text)
-                        fig_wc, ax = plt.subplots()
-                        ax.imshow(wc, interpolation='bilinear')
-                        ax.axis("off")
-                        st.pyplot(fig_wc)
-                    except ValueError:
-                        st.info("Not enough text to generate a word cloud for the selected category.")
-                else:
-                    st.info("No claim descriptions available for the selected category to generate a word cloud.")
-            else:
-                st.info("No Emerging Risk Categories available. Run NLP Inference in Tab 2 first.")
+            # if categories:
+            #     selected_category = st.selectbox("Select Category for WordCloud", categories)
+            #     text = " ".join(df[df['Emerging_Risk_Category'] == selected_category]['Claims_Description'].dropna().astype(str))
+            #     if text.strip():
+            #         try:
+            #             wc = WordCloud(width=800, height=400, background_color='white').generate(text)
+            #             fig_wc, ax = plt.subplots()
+            #             ax.imshow(wc, interpolation='bilinear')
+            #             ax.axis("off")
+            #             st.pyplot(fig_wc)
+            #         except ValueError:
+            #             st.info("Not enough text to generate a word cloud for the selected category.")
+            #     else:
+            #         st.info("No claim descriptions available for the selected category to generate a word cloud.")
+            # else:
+            #     st.info("No Emerging Risk Categories available. Run NLP Inference in Tab 2 first.")
 
         # ✅ Year-on-Year Bar Chart
         yoy_df = df.copy()
@@ -518,94 +670,142 @@ with tabs[3]:
 
 
 # Tab 5: Insights (LLM-enhanced newsletter)
-with tabs[4]:
-    if "df" in st.session_state:
-        df = st.session_state.df.copy()
-        st.subheader("LLM-Based Newsletter Summary")
-        summary_points = []
+# with tabs[4]:
+#     if "df" in st.session_state:
+#         df = st.session_state.df.copy()
 
-        # Ensure Year exists
-        if 'Year' not in df.columns:
-            df['Claim_Date'] = pd.to_datetime(df.get('Claim_Date', pd.Series()), errors='coerce')
-            df['Year'] = df['Claim_Date'].dt.year
+                
+#         # Extract unique product lines
+#         product_lines = sorted(df['Product_Line'].dropna().unique())
+#         selected_products = st.multiselect("Select Product Lines", product_lines, default=product_lines, key="product_line_tab_4")
 
-        # Top categories (safe handling if empty)
-        top_categories = df['Emerging_Risk_Category'].dropna().value_counts().head(5)
-        if not top_categories.empty:
-            for category, count in top_categories.items():
-                avg_loss = df[df['Emerging_Risk_Category'] == category]['Reported_Loss_Amount'].mean()
-                avg_loss_text = f"${avg_loss:,.2f}" if not pd.isna(avg_loss) else "N/A"
-                summary_points.append(f"- **{category}**: {count} claims, avg reported loss {avg_loss_text}")
-        else:
-            summary_points.append("- No Emerging Risk Categories detected yet. Run NLP Inference in Tab 2.")
+#         # Apply filter
+#         df = df[df['Product_Line'].isin(selected_products)]
 
-        # Recent year highlights
-        recent_year_series = df['Year'].dropna()
-        recent_year = None
-        if not recent_year_series.empty:
-            recent_year = int(recent_year_series.max())
-            recent_data = df[df['Year'] == recent_year]
-            if not recent_data.empty:
-                recent_counts = recent_data['Emerging_Risk_Category'].dropna().value_counts()
-                if not recent_counts.empty:
-                    top_recent = recent_counts.idxmax()
-                    summary_points.append(f"- In {recent_year}, most frequent risk category: **{top_recent}**.")
-                else:
-                    summary_points.append(f"- In {recent_year}, no categorized claims were available.")
-        else:
-            summary_points.append("- No claim year information available to generate recent highlights.")
 
-        # Compute simple year-over-year change for top categories (if enough data)
-        yoy_lines = []
-        if 'Year' in df.columns and not top_categories.empty:
-            pivot = df.dropna(subset=['Emerging_Risk_Category']).groupby(['Year', 'Emerging_Risk_Category']).size().unstack(fill_value=0)
-            years_sorted = sorted([y for y in pivot.index if pd.notna(y)])
-            if len(years_sorted) >= 2:
-                y_latest = years_sorted[-1]
-                y_prev = years_sorted[-2]
-                for category in top_categories.index:
-                    latest = int(pivot.loc[y_latest, category]) if category in pivot.columns and y_latest in pivot.index else 0
-                    prev = int(pivot.loc[y_prev, category]) if category in pivot.columns and y_prev in pivot.index else 0
-                    change = latest - prev
-                    pct = f"{(change/prev):.0%}" if prev != 0 else "N/A" if latest == 0 else "∞"
-                    yoy_lines.append(f"- {category}: {prev} → {latest} (Δ {change}, {pct}) between {y_prev} and {y_latest}")
-        if yoy_lines:
-            summary_points.append("- Year-over-Year changes for top categories:")
-            summary_points.extend(yoy_lines)
+#         st.subheader("LLM-Based Newsletter Summary")
+#         summary_points = []
 
-        # Display the short summary points
-        st.write("### Emerging Risk Highlights (Derived)")
-        for point in summary_points:
-            st.markdown(point)
+#         # Ensure Year exists
+#         if 'Year' not in df.columns:
+#             df['Claim_Date'] = pd.to_datetime(df.get('Claim_Date', pd.Series()), errors='coerce')
+#             df['Year'] = df['Claim_Date'].dt.year
 
-#         # Build prompt for LLM
-#         prompt_header = "You are an insurance claims analyst assistant. Given the derived emerging risk points and trends, produce a short newsletter (3-6 bullets) summarizing current trends, near-term (6-12 months) future possibilities, and 3 actionable recommendations for risk owners.\n\n"
-#         derived_text = "\n".join(summary_points)
-#         prompt = prompt_header + "Derived data:\n" + derived_text + "\n\nNewsletter:\n"
+#         # Top categories (safe handling if empty)
+#         top_categories = df['Emerging_Risk_Category'].dropna().value_counts().head(5)
+#         if not top_categories.empty:
+#             for category, count in top_categories.items():
+#                 avg_loss = df[df['Emerging_Risk_Category'] == category]['Reported_Loss_Amount'].mean()
+#                 avg_loss_text = f"${avg_loss:,.2f}" if not pd.isna(avg_loss) else "N/A"
+#                 summary_points.append(f"- **{category}**: {count} claims, avg reported loss {avg_loss_text}")
+#         else:
+#             summary_points.append("- No Emerging Risk Categories detected yet. Run NLP Inference in Tab 2.")
 
-        # st.markdown("### Generate newsletter using LLM")
-        # selected_generation_model = st.selectbox("LLM model (Hugging Face)", ["gpt2", "bigscience/bloom", "mistralai/Mistral-7B-Instruct-v0.1"], index=0)
-        # max_tokens = st.slider("Max tokens for generation", min_value=64, max_value=512, value=256, step=64)
+#         # Recent year highlights
+#         recent_year_series = df['Year'].dropna()
+#         recent_year = None
+#         if not recent_year_series.empty:
+#             recent_year = int(recent_year_series.max())
+#             recent_data = df[df['Year'] == recent_year]
+#             if not recent_data.empty:
+#                 recent_counts = recent_data['Emerging_Risk_Category'].dropna().value_counts()
+#                 if not recent_counts.empty:
+#                     top_recent = recent_counts.idxmax()
+#                     summary_points.append(f"- In {recent_year}, most frequent risk category: **{top_recent}**.")
+#                 else:
+#                     summary_points.append(f"- In {recent_year}, no categorized claims were available.")
+#         else:
+#             summary_points.append("- No claim year information available to generate recent highlights.")
 
-        # if st.button("Generate Newsletter (LLM)"):
-        #     with st.spinner("Generating newsletter..."):
-        #         llm_result = generate_newsletter(prompt, model=selected_generation_model, max_new_tokens=max_tokens)
-        #         if isinstance(llm_result, dict) and llm_result.get("error"):
-        #             st.error(f"LLM error: {llm_result['error']}")
-        #         else:
-        #             newsletter_text = llm_result.get("text") if isinstance(llm_result, dict) else str(llm_result)
-        #             # Show generated newsletter and allow edits
-        #             st.write("### Generated Newsletter")
-        #             editable = st.text_area("Edit newsletter before download/publish", value=newsletter_text, height=250)
-        #             st.download_button("Download Newsletter Summary", editable, "llm_risk_newsletter.txt")
-        # else:
-        #     st.info("Click 'Generate Newsletter (LLM)' to produce a newsletter using the selected model.")
+#         # Compute simple year-over-year change for top categories (if enough data)
+#         yoy_lines = []
+#         if 'Year' in df.columns and not top_categories.empty:
+#             pivot = df.dropna(subset=['Emerging_Risk_Category']).groupby(['Year', 'Emerging_Risk_Category']).size().unstack(fill_value=0)
+#             years_sorted = sorted([y for y in pivot.index if pd.notna(y)])
+#             if len(years_sorted) >= 2:
+#                 y_latest = years_sorted[-1]
+#                 y_prev = years_sorted[-2]
+#                 for category in top_categories.index:
+#                     latest = int(pivot.loc[y_latest, category]) if category in pivot.columns and y_latest in pivot.index else 0
+#                     prev = int(pivot.loc[y_prev, category]) if category in pivot.columns and y_prev in pivot.index else 0
+#                     change = latest - prev
+#                     pct = f"{(change/prev):.0%}" if prev != 0 else "N/A" if latest == 0 else "∞"
+#                     yoy_lines.append(f"- {category}: {prev} → {latest} (Δ {change}, {pct}) between {y_prev} and {y_latest}")
+#         if yoy_lines:
+#             summary_points.append("- Year-over-Year changes for top categories:")
+#             summary_points.extend(yoy_lines)
 
-    else:
-        st.warning("Please upload data in Tab 1")
+#         # Display the short summary points
+#         st.write("### Emerging Risk Highlights (Derived)")
+#         for point in summary_points:
+#             st.markdown(point)
+
+# #         # Build prompt for LLM
+# #         prompt_header = "You are an insurance claims analyst assistant. Given the derived emerging risk points and trends, produce a short newsletter (3-6 bullets) summarizing current trends, near-term (6-12 months) future possibilities, and 3 actionable recommendations for risk owners.\n\n"
+# #         derived_text = "\n".join(summary_points)
+# #         prompt = prompt_header + "Derived data:\n" + derived_text + "\n\nNewsletter:\n"
+
+#         # st.markdown("### Generate newsletter using LLM")
+#         # selected_generation_model = st.selectbox("LLM model (Hugging Face)", ["gpt2", "bigscience/bloom", "mistralai/Mistral-7B-Instruct-v0.1"], index=0)
+#         # max_tokens = st.slider("Max tokens for generation", min_value=64, max_value=512, value=256, step=64)
+
+#         # if st.button("Generate Newsletter (LLM)"):
+#         #     with st.spinner("Generating newsletter..."):
+#         #         llm_result = generate_newsletter(prompt, model=selected_generation_model, max_new_tokens=max_tokens)
+#         #         if isinstance(llm_result, dict) and llm_result.get("error"):
+#         #             st.error(f"LLM error: {llm_result['error']}")
+#         #         else:
+#         #             newsletter_text = llm_result.get("text") if isinstance(llm_result, dict) else str(llm_result)
+#         #             # Show generated newsletter and allow edits
+#         #             st.write("### Generated Newsletter")
+#         #             editable = st.text_area("Edit newsletter before download/publish", value=newsletter_text, height=250)
+#         #             st.download_button("Download Newsletter Summary", editable, "llm_risk_newsletter.txt")
+#         # else:
+#         #     st.info("Click 'Generate Newsletter (LLM)' to produce a newsletter using the selected model.")
+
+#     else:
+#         st.warning("Please upload data in Tab 1")
+
+
+
+# Tab 5: Summarized Newsletter
+# with tabs[4]:
+#     st.subheader("LLM-Based Newsletter Summary")
+#     if "news_df" not in st.session_state:
+#         with st.spinner("Fetching news articles for last 7 days..."):
+#             news_df = _fetch_news_df(DEFAULT_KEYWORDS, DEFAULT_START_DATE, DEFAULT_END_DATE, DEFAULT_MAX_PER_KEYWORD)
+#             st.session_state["news_df"] = news_df
+#     else:
+#         news_df = st.session_state["news_df"]
+
+#     # st.write("### News Feed Data")
+#     # st.dataframe(news_df)
+
+#     if "df" in st.session_state:
+#         df = st.session_state.df.copy()
+#         categories = df['Emerging_Risk_Category'].dropna().unique()
+#         for cat in categories:
+#             st.markdown(f"### {cat}")
+#             with st.spinner(f"Generating summary for {cat}..."):
+#                 # summary = generate_combined_category_summary(cat, news_df)
+#                 st.markdown(news_df[news_df['keyword'] == cat]['summary'].str.cat(sep="\n\n"))
+#     else:
+#         st.warning("Please upload data in Data Tab")
+
+
 
 # Tab 6: News Feed Insights
-with tabs[5]:
-    st.subheader("News Feed Insights")
-    render_news_feed_insights()
+# with tabs[5]:
+#     st.subheader("News Feed Insights")
+#     # render_news_feed_insights()
+#     if "df" in st.session_state:
+#         df = st.session_state.df.copy()
+#         categories = df['Emerging_Risk_Category'].dropna().unique()
+#         news_df = st.session_state.get("news_df_cache::<hash>", pd.DataFrame())
+
+#         for cat in categories:
+#             st.markdown(f"### {cat}")
+#             summary = generate_combined_category_summary(cat, df, news_df)
+#             st.markdown(summary)
+
     # render_event_dashboard(api_key=st.secrets.get("EVENTREGISTRY_API_KEY") if hasattr(st, "secrets") else os.environ.get("EVENTREGISTRY_API_KEY"))
