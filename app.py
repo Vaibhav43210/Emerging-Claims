@@ -95,7 +95,7 @@ def query_model(text, retries=2, timeout=90):
 # Streamlit app setup
 
 st.title("Emerging Risk Intelligence Engine")
-tabs = st.tabs(["Data Load", "Risk Category", "Risk Analysis", "Dimensional YOY Comparison"])
+tabs = st.tabs(["Data Load", "Risk Category", "Risk Analysis YOY", "Bulleted Summary"])
                 # , "Summarized Newsletter"])
 
 # Tab 1: Data Load
@@ -308,7 +308,7 @@ with tabs[2]:
         df['Claim_Date'] = pd.to_datetime(df['Claim_Date'], errors='coerce')
         df['Year'] = df['Claim_Date'].dt.year
 
-        st.subheader("Interactive Risk Analysis")
+        # st.subheader("Interactive Risk Analysis")
 
         # Filters (includes Emerging Risk Category)
         years = sorted(df['Year'].dropna().unique())
@@ -397,11 +397,11 @@ with tabs[2]:
 
         # st.download_button("Download Yearly Aggregated Summary", yearly_agg.to_csv(index=False), "yearly_aggregated_summary.csv")
 
-        st.write("### Aggregated Summary - Year x Emerging Risk Category")
+        # st.write("### Aggregated Summary - Year x Emerging Risk Category")
         
         
         
-        # ✅ Aggregate by Year for a single line
+        # # ✅ Aggregate by Year for a single line
         agg_by_year = category_agg.groupby('Year').agg({
             'Reported_Loss_Amount': 'sum',
             'Final_Settled_Amount': 'sum',
@@ -444,7 +444,7 @@ with tabs[2]:
             barmode='stack',
             xaxis=dict(type='category', title='Year'),
             yaxis=dict(title='Amount (£)', tickprefix='£', tickformat='.2s'),
-            yaxis2=dict(title='Claim Count', overlaying='y', side='right'),
+            yaxis2=dict(title='Claim Count', overlaying='y', side='right',dtick=100),
             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
         )
 
@@ -455,51 +455,75 @@ with tabs[2]:
 
         st.plotly_chart(fig_combined, use_container_width=True)
 
+        yoy_df = df.copy()
+        if 'Year' not in yoy_df.columns:
+            yoy_df['Year'] = pd.to_datetime(yoy_df.get('Claim_Date', pd.Series()), errors='coerce').dt.year
+        yoy_df = yoy_df.groupby(['Year', 'Emerging_Risk_Category']).agg({'Claim_ID': 'count'}).reset_index()
+        fig_yoy = px.bar(yoy_df, x='Year', y='Claim_ID', color='Emerging_Risk_Category',
+                         title='Year-on-Year Claim Count by Emerging Risk Category', barmode='group')
+        fig_yoy.update_yaxes(tickformat=".2s")
+        st.plotly_chart(fig_yoy, use_container_width=True)
+
+        # ✅ Sunburst Chart
+        viz_df = df.copy()
+        viz_df['Year'] = pd.to_datetime(viz_df.get('Claim_Date', pd.Series()), errors='coerce').dt.year
+        sunburst_df = viz_df.groupby(['Year', 'Emerging_Risk_Category']).size().reset_index(name='Count')
+        if not sunburst_df.empty and sunburst_df['Year'].notna().any() and sunburst_df['Emerging_Risk_Category'].notna().any():
+            fig_sunburst = px.sunburst(
+                sunburst_df,
+                path=['Year', 'Emerging_Risk_Category'],
+                values='Count',
+                title='Risk Category Distribution by Year'
+            )
+            st.plotly_chart(fig_sunburst, use_container_width=True)
+        else:
+            st.warning("No valid data available for Sunburst chart.")
+
         # st.download_button("Download Category Aggregated Summary", category_agg.to_csv(index=False), "category_aggregated_summary.csv")
 
         # Charts
-        st.write("### Interactive Charts")
+        # st.write("### Interactive Charts")
         
-        fig_claim = px.bar(
-            yearly_agg,
-            x="Year",
-            y="Total Settled",
-            title="Claim Volume Over Years"
-        )
+        # fig_claim = px.bar(
+        #     yearly_agg,
+        #     x="Year",
+        #     y="Total Settled",
+        #     title="Claim Volume Over Years"
+        # )
 
         # Ensure Year axis shows integers (no decimals) and format monetary values
-        fig_claim.update_layout(
-            xaxis=dict(type="category", tickformat="d"),  # Treat Year as categorical
-        )
-        fig_claim.update_yaxes(tickprefix="£", tickformat=".2s")
+        # fig_claim.update_layout(
+        #     xaxis=dict(type="category", tickformat="d"),  # Treat Year as categorical
+        # )
+        # fig_claim.update_yaxes(tickprefix="£", tickformat=".2s")
 
-        st.plotly_chart(fig_claim, use_container_width=True)
+        # st.plotly_chart(fig_claim, use_container_width=True)
 
 
         
         # Recovery Amount Over Years
-        fig_recovery = px.line(
-            yearly_agg,
-            x="Year",
-            y="Total Recovery",
-            title="Recovery Amount Over Years",
-            markers=True
-        )
-        fig_recovery.update_layout(xaxis=dict(type="category", tickformat="d"))
-        fig_recovery.update_yaxes(tickprefix="£", tickformat=".2s")
-        st.plotly_chart(fig_recovery, use_container_width=True)
+        # fig_recovery = px.line(
+        #     yearly_agg,
+        #     x="Year",
+        #     y="Total Recovery",
+        #     title="Recovery Amount Over Years",
+        #     markers=True
+        # )
+        # fig_recovery.update_layout(xaxis=dict(type="category", tickformat="d"))
+        # fig_recovery.update_yaxes(tickprefix="£", tickformat=".2s")
+        # st.plotly_chart(fig_recovery, use_container_width=True)
 
-        # Reported Loss Amount Over Years
-        fig_loss = px.line(
-            yearly_agg,
-            x="Year",
-            y="Total Reported Loss",
-            title="Reported Loss Amount Over Years",
-            markers=True
-        )
-        fig_loss.update_layout(xaxis=dict(type="category", tickformat="d"))
-        fig_loss.update_yaxes(tickprefix="£", tickformat=".2s")
-        st.plotly_chart(fig_loss, use_container_width=True)
+        # # Reported Loss Amount Over Years
+        # fig_loss = px.line(
+        #     yearly_agg,
+        #     x="Year",
+        #     y="Total Reported Loss",
+        #     title="Reported Loss Amount Over Years",
+        #     markers=True
+        # )
+        # fig_loss.update_layout(xaxis=dict(type="category", tickformat="d"))
+        # fig_loss.update_yaxes(tickprefix="£", tickformat=".2s")
+        # st.plotly_chart(fig_loss, use_container_width=True)
 
         # Average Loss Ratio Over Years
         # fig_ratio = px.line(
@@ -516,11 +540,11 @@ with tabs[2]:
 
         
         # Chart: Year-on-Year by Emerging Risk Category
-        if not category_agg.empty:
-            fig_cat = px.bar(category_agg, x="Year", y="Claim_Count", color="Emerging_Risk_Category",
-                             title="Year-on-Year Claim Count by Emerging Risk Category", barmode='group')
-            fig_cat.update_yaxes(tickformat=".2s")
-            st.plotly_chart(fig_cat, use_container_width=True)
+        # if not category_agg.empty:
+        #     fig_cat = px.bar(category_agg, x="Year", y="Claim_Count", color="Emerging_Risk_Category",
+        #                      title="Year-on-Year Claim Count by Emerging Risk Category", barmode='group')
+        #     fig_cat.update_yaxes(tickformat=".2s")
+        #     st.plotly_chart(fig_cat, use_container_width=True)
 
     else:
         st.warning("Please upload data in Data Tab")
@@ -600,28 +624,28 @@ with tabs[2]:
 #         st.warning("Please upload data in Data Tab")
 
 # Tab 4: Visualization
-with tabs[3]:
-    if "df" in st.session_state:
-        df = st.session_state.df
+# with tabs[3]:
+#     if "df" in st.session_state:
+#         df = st.session_state.df
 
                 
-                # Extract unique LOBs
-        lobs = sorted(df['LOB'].dropna().unique())
-        selected_lobs = st.multiselect("Select Lines of Business (LOB)", lobs, default=lobs, key="lob_tab_3")
+#                 # Extract unique LOBs
+#         lobs = sorted(df['LOB'].dropna().unique())
+#         selected_lobs = st.multiselect("Select Lines of Business (LOB)", lobs, default=lobs, key="lob_tab_3")
 
-        # Apply LOB filter
-        df = df[df['LOB'].isin(selected_lobs)]
+#         # Apply LOB filter
+#         df = df[df['LOB'].isin(selected_lobs)]
 
-        # ✅ Guard clause to wait for NLP inference
-        if 'Emerging_Risk_Category' not in df.columns or df['Emerging_Risk_Category'].dropna().empty:
-            st.warning("Waiting for NLP inference. Please run it in Tab 2 to view visualizations.")
-            st.stop()
+#         # ✅ Guard clause to wait for NLP inference
+#         if 'Emerging_Risk_Category' not in df.columns or df['Emerging_Risk_Category'].dropna().empty:
+#             st.warning("Waiting for NLP inference. Please run it in Tab 2 to view visualizations.")
+#             st.stop()
 
-        st.subheader("WordClouds & Year-on-Year Comparison")
+#         st.subheader("WordClouds & Year-on-Year Comparison")
 
-        # ✅ WordCloud
-        if 'Claims_Description' in df.columns:
-            categories = df['Emerging_Risk_Category'].dropna().unique().tolist()
+#         # ✅ WordCloud
+#         if 'Claims_Description' in df.columns:
+#             categories = df['Emerging_Risk_Category'].dropna().unique().tolist()
             # if categories:
             #     selected_category = st.selectbox("Select Category for WordCloud", categories)
             #     text = " ".join(df[df['Emerging_Risk_Category'] == selected_category]['Claims_Description'].dropna().astype(str))
@@ -640,135 +664,150 @@ with tabs[3]:
             #     st.info("No Emerging Risk Categories available. Run NLP Inference in Tab 2 first.")
 
         # ✅ Year-on-Year Bar Chart
-        yoy_df = df.copy()
-        if 'Year' not in yoy_df.columns:
-            yoy_df['Year'] = pd.to_datetime(yoy_df.get('Claim_Date', pd.Series()), errors='coerce').dt.year
-        yoy_df = yoy_df.groupby(['Year', 'Emerging_Risk_Category']).agg({'Claim_ID': 'count'}).reset_index()
-        fig_yoy = px.bar(yoy_df, x='Year', y='Claim_ID', color='Emerging_Risk_Category',
-                         title='Year-on-Year Claim Count by Emerging Risk Category', barmode='group')
-        fig_yoy.update_yaxes(tickformat=".2s")
-        st.plotly_chart(fig_yoy, use_container_width=True)
+    #     yoy_df = df.copy()
+    #     if 'Year' not in yoy_df.columns:
+    #         yoy_df['Year'] = pd.to_datetime(yoy_df.get('Claim_Date', pd.Series()), errors='coerce').dt.year
+    #     yoy_df = yoy_df.groupby(['Year', 'Emerging_Risk_Category']).agg({'Claim_ID': 'count'}).reset_index()
+    #     fig_yoy = px.bar(yoy_df, x='Year', y='Claim_ID', color='Emerging_Risk_Category',
+    #                      title='Year-on-Year Claim Count by Emerging Risk Category', barmode='group')
+    #     fig_yoy.update_yaxes(tickformat=".2s")
+    #     st.plotly_chart(fig_yoy, use_container_width=True)
 
-        # ✅ Sunburst Chart
-        viz_df = df.copy()
-        viz_df['Year'] = pd.to_datetime(viz_df.get('Claim_Date', pd.Series()), errors='coerce').dt.year
-        sunburst_df = viz_df.groupby(['Year', 'Emerging_Risk_Category']).size().reset_index(name='Count')
-        if not sunburst_df.empty and sunburst_df['Year'].notna().any() and sunburst_df['Emerging_Risk_Category'].notna().any():
-            fig_sunburst = px.sunburst(
-                sunburst_df,
-                path=['Year', 'Emerging_Risk_Category'],
-                values='Count',
-                title='Risk Category Distribution by Year'
-            )
-            st.plotly_chart(fig_sunburst, use_container_width=True)
-        else:
-            st.warning("No valid data available for Sunburst chart.")
+    #     # ✅ Sunburst Chart
+    #     viz_df = df.copy()
+    #     viz_df['Year'] = pd.to_datetime(viz_df.get('Claim_Date', pd.Series()), errors='coerce').dt.year
+    #     sunburst_df = viz_df.groupby(['Year', 'Emerging_Risk_Category']).size().reset_index(name='Count')
+    #     if not sunburst_df.empty and sunburst_df['Year'].notna().any() and sunburst_df['Emerging_Risk_Category'].notna().any():
+    #         fig_sunburst = px.sunburst(
+    #             sunburst_df,
+    #             path=['Year', 'Emerging_Risk_Category'],
+    #             values='Count',
+    #             title='Risk Category Distribution by Year'
+    #         )
+    #         st.plotly_chart(fig_sunburst, use_container_width=True)
+    #     else:
+    #         st.warning("No valid data available for Sunburst chart.")
 
-        # ✅ Treemap
-        treemap_df = viz_df.groupby(['Year', 'Emerging_Risk_Category']).agg({'Final_Settled_Amount': 'sum'}).reset_index()
-        fig_treemap = px.treemap(treemap_df, path=['Year', 'Emerging_Risk_Category'], values='Final_Settled_Amount',
-                                 title='Settled Amount by Risk Category and Year')
-        st.plotly_chart(fig_treemap, use_container_width=True)
+    #     # ✅ Treemap
+    #     treemap_df = viz_df.groupby(['Year', 'Emerging_Risk_Category']).agg({'Final_Settled_Amount': 'sum'}).reset_index()
+    #     fig_treemap = px.treemap(treemap_df, path=['Year', 'Emerging_Risk_Category'], values='Final_Settled_Amount',
+    #                              title='Settled Amount by Risk Category and Year')
+    #     st.plotly_chart(fig_treemap, use_container_width=True)
 
-        # ✅ Animated Bar Chart
-        animated_df = df.groupby(['Year', 'Emerging_Risk_Category']).size().reset_index(name='Claim_Count')
-        fig_animated = px.bar(animated_df, x='Emerging_Risk_Category', y='Claim_Count', color='Emerging_Risk_Category',
-                              animation_frame='Year', title='YOY Claim Count by Risk Category')
-        st.plotly_chart(fig_animated, use_container_width=True)
-    else:
-        st.warning("Please upload data in Tab 1")
+    #     # ✅ Animated Bar Chart
+    #     animated_df = df.groupby(['Year', 'Emerging_Risk_Category']).size().reset_index(name='Claim_Count')
+    #     fig_animated = px.bar(animated_df, x='Emerging_Risk_Category', y='Claim_Count', color='Emerging_Risk_Category',
+    #                           animation_frame='Year', title='YOY Claim Count by Risk Category')
+    #     st.plotly_chart(fig_animated, use_container_width=True)
+    # else:
+    #     st.warning("Please upload data in Tab 1")
 
 
 # Tab 5: Insights (LLM-enhanced newsletter)
-# with tabs[4]:
-#     if "df" in st.session_state:
-#         df = st.session_state.df.copy()
+with tabs[3]:
+    if "df" in st.session_state:
+        df = st.session_state.df.copy()
 
                 
-#         # Extract unique product lines
-#         product_lines = sorted(df['Product_Line'].dropna().unique())
-#         selected_products = st.multiselect("Select Product Lines", product_lines, default=product_lines, key="product_line_tab_4")
+               # Extract unique LOBs
+        lobs = sorted(df['LOB'].dropna().unique())
+        selected_lobs = st.multiselect("Select Lines of Business (LOB)", lobs, default=lobs, key="lob_tab_4")
 
-#         # Apply filter
-#         df = df[df['Product_Line'].isin(selected_products)]
+        # Apply LOB filter
+        df = df[df['LOB'].isin(selected_lobs)]
 
 
-#         st.subheader("LLM-Based Newsletter Summary")
-#         summary_points = []
+        st.subheader("LLM-Based Newsletter Summary")
+        summary_points = []
 
-#         # Ensure Year exists
-#         if 'Year' not in df.columns:
-#             df['Claim_Date'] = pd.to_datetime(df.get('Claim_Date', pd.Series()), errors='coerce')
-#             df['Year'] = df['Claim_Date'].dt.year
+        # Ensure Year exists
+        if 'Year' not in df.columns:
+            df['Claim_Date'] = pd.to_datetime(df.get('Claim_Date', pd.Series()), errors='coerce')
+            df['Year'] = df['Claim_Date'].dt.year
 
-#         # Top categories (safe handling if empty)
-#         top_categories = df['Emerging_Risk_Category'].dropna().value_counts().head(5)
-#         if not top_categories.empty:
-#             for category, count in top_categories.items():
-#                 avg_loss = df[df['Emerging_Risk_Category'] == category]['Reported_Loss_Amount'].mean()
-#                 avg_loss_text = f"${avg_loss:,.2f}" if not pd.isna(avg_loss) else "N/A"
-#                 summary_points.append(f"- **{category}**: {count} claims, avg reported loss {avg_loss_text}")
+        # Top categories (safe handling if empty)
+        top_categories = df['Emerging_Risk_Category'].dropna().value_counts().head(5)
+        if not top_categories.empty:
+            for category, count in top_categories.items():
+                avg_loss = df[df['Emerging_Risk_Category'] == category]['Reported_Loss_Amount'].mean()
+                avg_loss_text = f"${avg_loss:,.2f}" if not pd.isna(avg_loss) else "N/A"
+                summary_points.append(f"- **{category}**: {count} claims, avg reported loss {avg_loss_text}")
+        else:
+            summary_points.append("- No Emerging Risk Categories detected yet. Run NLP Inference in Tab 2.")
+
+        # Recent year highlights
+        recent_year_series = df['Year'].dropna()
+        recent_year = None
+        if not recent_year_series.empty:
+            recent_year = int(recent_year_series.max())
+            recent_data = df[df['Year'] == recent_year]
+            if not recent_data.empty:
+                recent_counts = recent_data['Emerging_Risk_Category'].dropna().value_counts()
+                if not recent_counts.empty:
+                    top_recent = recent_counts.idxmax()
+                    summary_points.append(f"- In {recent_year}, most frequent risk category: **{top_recent}**.")
+                else:
+                    summary_points.append(f"- In {recent_year}, no categorized claims were available.")
+        else:
+            summary_points.append("- No claim year information available to generate recent highlights.")
+
+        # Compute simple year-over-year change for top categories (if enough data)
+        yoy_lines = []
+        if 'Year' in df.columns and not top_categories.empty:
+            pivot = df.dropna(subset=['Emerging_Risk_Category']).groupby(['Year', 'Emerging_Risk_Category']).size().unstack(fill_value=0)
+            years_sorted = sorted([y for y in pivot.index if pd.notna(y)])
+            if len(years_sorted) >= 2:
+                y_latest = years_sorted[-1]
+                y_prev = years_sorted[-2]
+                for category in top_categories.index:
+                    latest = int(pivot.loc[y_latest, category]) if category in pivot.columns and y_latest in pivot.index else 0
+                    prev = int(pivot.loc[y_prev, category]) if category in pivot.columns and y_prev in pivot.index else 0
+                    change = latest - prev
+                    pct = f"{(change/prev):.0%}" if prev != 0 else "N/A" if latest == 0 else "∞"
+                    yoy_lines.append(f"- {category}: {prev} → {latest} (Δ {change}, {pct}) between {y_prev} and {y_latest}")
+        if yoy_lines:
+            summary_points.append("- Year-over-Year changes for top categories:")
+            summary_points.extend(yoy_lines)
+
+        # Display the short summary points
+        st.write("### Emerging Risk Highlights (Derived)")
+        for point in summary_points:
+            st.markdown(point)
+
+# # #         # Build prompt for LLM
+        
+#         API_URL = "https://router.huggingface.co/hf-inference/models/facebook/bart-large-cnn"
+#         headers = {"Authorization": f"Bearer {api_key}"}
+
+#         prompt = """
+#         You are an insurance claims analyst assistant. Based on the derived emerging risk points and trends, create a short newsletter (3–6 bullet points) that includes:
+#         - Current trends (highlight any increasing or decreasing patterns),
+#         - Near-term future possibilities (6–12 months outlook),
+#         - Three actionable recommendations for risk owners.
+
+#         Use professional language suitable for senior management.
+#         Format category names in **bold** using Markdown.
+#         Emphasize significant changes and year-over-year shifts.
+#         Derived data:
+#         """ + "\n".join(summary_points)
+
+#         payload = {"inputs": prompt}
+
+#         response = requests.post(API_URL, headers=headers, json=payload)
+#         resp_json = response.json()
+
+#         if isinstance(resp_json, list) and 'summary_text' in resp_json[0]:
+#             summary = resp_json[0]['summary_text']
+#             st.markdown(summary)
 #         else:
-#             summary_points.append("- No Emerging Risk Categories detected yet. Run NLP Inference in Tab 2.")
+#             st.error(f"Unexpected API response: {resp_json}")
 
-#         # Recent year highlights
-#         recent_year_series = df['Year'].dropna()
-#         recent_year = None
-#         if not recent_year_series.empty:
-#             recent_year = int(recent_year_series.max())
-#             recent_data = df[df['Year'] == recent_year]
-#             if not recent_data.empty:
-#                 recent_counts = recent_data['Emerging_Risk_Category'].dropna().value_counts()
-#                 if not recent_counts.empty:
-#                     top_recent = recent_counts.idxmax()
-#                     summary_points.append(f"- In {recent_year}, most frequent risk category: **{top_recent}**.")
-#                 else:
-#                     summary_points.append(f"- In {recent_year}, no categorized claims were available.")
-#         else:
-#             summary_points.append("- No claim year information available to generate recent highlights.")
 
-#         # Compute simple year-over-year change for top categories (if enough data)
-#         yoy_lines = []
-#         if 'Year' in df.columns and not top_categories.empty:
-#             pivot = df.dropna(subset=['Emerging_Risk_Category']).groupby(['Year', 'Emerging_Risk_Category']).size().unstack(fill_value=0)
-#             years_sorted = sorted([y for y in pivot.index if pd.notna(y)])
-#             if len(years_sorted) >= 2:
-#                 y_latest = years_sorted[-1]
-#                 y_prev = years_sorted[-2]
-#                 for category in top_categories.index:
-#                     latest = int(pivot.loc[y_latest, category]) if category in pivot.columns and y_latest in pivot.index else 0
-#                     prev = int(pivot.loc[y_prev, category]) if category in pivot.columns and y_prev in pivot.index else 0
-#                     change = latest - prev
-#                     pct = f"{(change/prev):.0%}" if prev != 0 else "N/A" if latest == 0 else "∞"
-#                     yoy_lines.append(f"- {category}: {prev} → {latest} (Δ {change}, {pct}) between {y_prev} and {y_latest}")
-#         if yoy_lines:
-#             summary_points.append("- Year-over-Year changes for top categories:")
-#             summary_points.extend(yoy_lines)
 
-#         # Display the short summary points
-#         st.write("### Emerging Risk Highlights (Derived)")
-#         for point in summary_points:
-#             st.markdown(point)
-
-# #         # Build prompt for LLM
-# #         prompt_header = "You are an insurance claims analyst assistant. Given the derived emerging risk points and trends, produce a short newsletter (3-6 bullets) summarizing current trends, near-term (6-12 months) future possibilities, and 3 actionable recommendations for risk owners.\n\n"
-# #         derived_text = "\n".join(summary_points)
-# #         prompt = prompt_header + "Derived data:\n" + derived_text + "\n\nNewsletter:\n"
-
-#         # st.markdown("### Generate newsletter using LLM")
-#         # selected_generation_model = st.selectbox("LLM model (Hugging Face)", ["gpt2", "bigscience/bloom", "mistralai/Mistral-7B-Instruct-v0.1"], index=0)
-#         # max_tokens = st.slider("Max tokens for generation", min_value=64, max_value=512, value=256, step=64)
-
-#         # if st.button("Generate Newsletter (LLM)"):
-#         #     with st.spinner("Generating newsletter..."):
-#         #         llm_result = generate_newsletter(prompt, model=selected_generation_model, max_new_tokens=max_tokens)
-#         #         if isinstance(llm_result, dict) and llm_result.get("error"):
-#         #             st.error(f"LLM error: {llm_result['error']}")
-#         #         else:
-#         #             newsletter_text = llm_result.get("text") if isinstance(llm_result, dict) else str(llm_result)
-#         #             # Show generated newsletter and allow edits
-#         #             st.write("### Generated Newsletter")
-#         #             editable = st.text_area("Edit newsletter before download/publish", value=newsletter_text, height=250)
+            # newsletter_text = llm_result.get("text") if isinstance(llm_result, dict) else str(llm_result)
+            # # Show generated newsletter and allow edits
+            # st.write("### Generated Newsletter")
+            # editable = st.text_area("Edit newsletter before download/publish", value=newsletter_text, height=250)
 #         #             st.download_button("Download Newsletter Summary", editable, "llm_risk_newsletter.txt")
 #         # else:
 #         #     st.info("Click 'Generate Newsletter (LLM)' to produce a newsletter using the selected model.")
