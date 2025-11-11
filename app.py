@@ -339,17 +339,19 @@ with tabs[2]:
 
         # KPI Cards
         total_claims = filtered_df['Claim_ID'].nunique()
-        total_reported_loss = filtered_df['Reported_Loss_Amount'].sum()
+        total_net_loss = filtered_df['Net_Loss'].sum()
         total_settled = filtered_df['Final_Settled_Amount'].sum()
         total_recovery = filtered_df['Recovery_Amount'].sum()
+        total_insured = filtered_df['Insured_Value'].sum()
         avg_loss_ratio = filtered_df['Loss_Ratio'].mean()
 
         st.write("### Key KPIs")
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         col1.metric("Total Claims", human_count(total_claims))
-        col2.metric("Reported Loss", human_currency(total_reported_loss))
+        col2.metric("Net Loss", human_currency(total_net_loss))
         col3.metric("Settled Amount", human_currency(total_settled))
         col4.metric("Recovery Amount", human_currency(total_recovery))
+        col5.metric("Total Insured Value", human_currency(total_insured))
         # col5.metric("Incurred Loss Ratio", f"{avg_loss_ratio:.2%}" if not pd.isna(avg_loss_ratio) else "N/A")
 
         res_df = filtered_df.copy()
@@ -387,17 +389,17 @@ with tabs[2]:
 
         # Aggregated Summary: yearly totals and Year x Emerging Risk Category breakdown
         yearly_agg = filtered_df.groupby(["Year", "Emerging_Risk_Category"]).agg({
-            "Reported_Loss_Amount": "sum",
+            "Insured_Value": "sum",
             "Final_Settled_Amount": "sum",
             "Recovery_Amount": "sum",
             "Net_Loss": "sum"
             # "Loss_Ratio": "mean"
         }).reset_index()
-        yearly_agg.columns = ["Year", "Emerging_Risk_Category", "Total Reported Loss", "Total Settled", "Total Recovery", "Total Net Loss"]
+        yearly_agg.columns = ["Year", "Emerging_Risk_Category", "Total Insured Value", "Total Settled", "Total Recovery", "Total Net Loss"]
 
         category_agg = filtered_df.groupby(["Year", "Emerging_Risk_Category"]).agg({
             "Claim_ID": "count",
-            "Reported_Loss_Amount": "sum",
+            "Net_Loss": "sum",
             "Final_Settled_Amount": "sum"
         }).reset_index().rename(columns={"Claim_ID": "Claim_Count"})
 
@@ -438,7 +440,7 @@ with tabs[2]:
         
         # # ✅ Aggregate by Year for a single line
         agg_by_year = category_agg.groupby('Year').agg({
-            'Reported_Loss_Amount': 'sum',
+            'Net_Loss': 'sum',
             'Final_Settled_Amount': 'sum',
             'Claim_Count': 'sum'
         }).reset_index()
@@ -450,8 +452,8 @@ with tabs[2]:
         # # Add stacked bars for monetary metrics (overall totals per year)
         # fig_combined.add_trace(go.Bar(
         #     x=agg_by_year['Year'],
-        #     y=agg_by_year['Reported_Loss_Amount'],
-        #     name="Reported Loss",
+        #     y=agg_by_year['Net_Loss'],
+        #     name="net Loss",
         #     marker_color='lightblue'
         # ))
 
@@ -508,7 +510,7 @@ with tabs[2]:
                 sunburst_df,
                 path=['Year', 'Emerging_Risk_Category'],
                 values='Count',
-                title='Risk Category Distribution by Year'
+                title='Claim Counts Distribution by Year'
             )
             st.plotly_chart(fig_sunburst, use_container_width=True)
         else:
@@ -554,12 +556,12 @@ with tabs[2]:
         # fig_recovery.update_yaxes(tickprefix="£", tickformat=".2s")
         # st.plotly_chart(fig_recovery, use_container_width=True)
 
-        # # Reported Loss Amount Over Years
+        # # net Loss Amount Over Years
         # fig_loss = px.line(
         #     yearly_agg,
         #     x="Year",
-        #     y="Total Reported Loss",
-        #     title="Reported Loss Amount Over Years",
+        #     y="Total net Loss",
+        #     title="net Loss Amount Over Years",
         #     markers=True
         # )
         # fig_loss.update_layout(xaxis=dict(type="category", tickformat="d"))
@@ -758,7 +760,7 @@ with tabs[3]:
         df = df[df['LOB'].isin(selected_lobs)]
 
 
-        st.subheader("LLM-Based Newsletter Summary")
+        # st.subheader("LLM-Based Newsletter Summary")
         summary_points = []
 
         # Ensure Year exists
@@ -770,9 +772,9 @@ with tabs[3]:
         top_categories = df['Emerging_Risk_Category'].dropna().value_counts().head(5)
         if not top_categories.empty:
             for category, count in top_categories.items():
-                avg_loss = df[df['Emerging_Risk_Category'] == category]['Reported_Loss_Amount'].mean()
+                avg_loss = df[df['Emerging_Risk_Category'] == category]['Net_Loss'].mean()
                 avg_loss_text = f"${avg_loss:,.2f}" if not pd.isna(avg_loss) else "N/A"
-                summary_points.append(f"- **{category}**: {count} claims, avg reported loss {avg_loss_text}")
+                summary_points.append(f"- **{category}**: {count} claims, avg net loss {avg_loss_text}")
         else:
             summary_points.append("- No Emerging Risk Categories detected yet. Run NLP Inference in Tab 2.")
 
