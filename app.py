@@ -323,7 +323,7 @@ with tabs[2]:
         # selected_industries = st.multiselect("Select Industry Segments", industries, default=industries)
         # selected_countries = st.multiselect("Select Countries", countries, default=countries)
         # selected_claim_types = st.multiselect("Select Claim Types", claim_types, default=claim_types)
-        selected_categories = st.multiselect("Select Emerging Risk Categories", categories, default=categories if categories else [])
+        # selected_categories = st.multiselect("Select Emerging Risk Categories", categories, default=categories if categories else [])
 
         # Apply filters (handle empty category list)
         filtered_df = df[
@@ -334,8 +334,8 @@ with tabs[2]:
             # (df['Country'].isin(selected_countries)) &
             # (df['Claim_Type'].isin(selected_claim_types))
         ]
-        if selected_categories:
-            filtered_df = filtered_df[filtered_df['Emerging_Risk_Category'].isin(selected_categories)]
+        # if selected_categories:
+        filtered_df = filtered_df[filtered_df['Emerging_Risk_Category'].isin(candidate_labels)]
 
         # KPI Cards
         total_claims = filtered_df['Claim_ID'].nunique()
@@ -352,16 +352,48 @@ with tabs[2]:
         col4.metric("Recovery Amount", human_currency(total_recovery))
         # col5.metric("Incurred Loss Ratio", f"{avg_loss_ratio:.2%}" if not pd.isna(avg_loss_ratio) else "N/A")
 
+        res_df = filtered_df.copy()
+        bins = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        labels = ['0-0.2', '0.2-0.4', '0.4-0.6', '0.6-0.8', '0.8-1.0']
+        res_df['Confidence_Bin'] = pd.cut(res_df['Confidence_Score'], bins=bins, labels=labels, include_lowest=True)
+
+        
+                
+        # Group by category and confidence bin
+        grouped = res_df.groupby(['Emerging_Risk_Category', 'Confidence_Bin']).size().reset_index(name='Claim_Count')
+
+        # Remove rows with 0 claims
+        grouped = grouped[grouped['Claim_Count'] > 0]
+
+        # Create grouped bar chart
+        fig = px.bar(
+            grouped,
+            x='Confidence_Bin',
+            y='Claim_Count',
+            color='Emerging_Risk_Category',
+            barmode='group',
+            title='Claim Count by Confidence Score Bin and Emerging Risk Category',
+            labels={'Confidence_Bin': 'Confidence Score Bin', 'Claim_Count': 'Number of Claims'}
+        )
+
+        # ✅ Force X-axis order
+        fig.update_xaxes(categoryorder='array', categoryarray=labels)
+
+        # Display in Streamlit
+        st.plotly_chart(fig, use_container_width=True)
+
+
+
+
         # Aggregated Summary: yearly totals and Year x Emerging Risk Category breakdown
-        yearly_agg = filtered_df.groupby("Year").agg({
-            "Claim_ID": "count",
+        yearly_agg = filtered_df.groupby(["Year", "Emerging_Risk_Category"]).agg({
             "Reported_Loss_Amount": "sum",
             "Final_Settled_Amount": "sum",
             "Recovery_Amount": "sum",
             "Net_Loss": "sum"
             # "Loss_Ratio": "mean"
         }).reset_index()
-        yearly_agg.columns = ["Year", "Claim Count", "Total Reported Loss", "Total Settled", "Total Recovery", "Total Net Loss"]
+        yearly_agg.columns = ["Year", "Emerging_Risk_Category", "Total Reported Loss", "Total Settled", "Total Recovery", "Total Net Loss"]
 
         category_agg = filtered_df.groupby(["Year", "Emerging_Risk_Category"]).agg({
             "Claim_ID": "count",
@@ -374,26 +406,29 @@ with tabs[2]:
         
 
         # ✅ Replace table with multi-line chart
-        melted = yearly_agg.melt(id_vars="Year", var_name="Metric", value_name="Value")
+        melted = yearly_agg.melt(id_vars=["Year", "Emerging_Risk_Category"], var_name="Metric", value_name="Value")
 
-        fig_yearly_metrics = px.line(
+        
+        melted['YoY_Change'] = melted.groupby(['Emerging_Risk_Category', 'Metric'])['Value'].pct_change() * 100
+
+                
+        fig_yearly_mterics = px.bar(
             melted,
             x="Year",
             y="Value",
-            color="Metric",
-            title="Year-wise Metrics Overview",
-            markers=True
+            color="Emerging_Risk_Category",
+            facet_col="Metric",
+            barmode="group",
+            text=melted['YoY_Change'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else ""),
+            title="Year-over-Year Amounts by Metric and Emerging Risk Category",
+            labels={"Value": "Amount (£)", "Year": "Year"}
         )
 
-        # ✅ Format Year axis (no commas) and add pound symbol for monetary values
-        fig_yearly_metrics.update_yaxes(tickprefix="£")
-        fig_yearly_metrics.update_layout(
-            xaxis=dict(tickformat="d"),
-            yaxis_title="Value",
-            legend_title="Metric"
-        )
+        fig_yearly_mterics.update_traces(textposition="outside")
+        fig_yearly_mterics.update_layout(uniformtext_minsize=8, uniformtext_mode='hide')
+        st.plotly_chart(fig_yearly_mterics, use_container_width=True)
 
-        st.plotly_chart(fig_yearly_metrics, use_container_width=True)
+
 
         # st.download_button("Download Yearly Aggregated Summary", yearly_agg.to_csv(index=False), "yearly_aggregated_summary.csv")
 
@@ -410,59 +445,59 @@ with tabs[2]:
 
 
         # Create figure
-        fig_combined = go.Figure()
+        # fig_combined = go.Figure()
 
-        # Add stacked bars for monetary metrics (overall totals per year)
-        fig_combined.add_trace(go.Bar(
-            x=agg_by_year['Year'],
-            y=agg_by_year['Reported_Loss_Amount'],
-            name="Reported Loss",
-            marker_color='lightblue'
-        ))
+        # # Add stacked bars for monetary metrics (overall totals per year)
+        # fig_combined.add_trace(go.Bar(
+        #     x=agg_by_year['Year'],
+        #     y=agg_by_year['Reported_Loss_Amount'],
+        #     name="Reported Loss",
+        #     marker_color='lightblue'
+        # ))
 
-        fig_combined.add_trace(go.Bar(
-            x=agg_by_year['Year'],
-            y=agg_by_year['Final_Settled_Amount'],
-            name="Final Settled Amount",
-            marker_color='steelblue'
-        ))
+        # fig_combined.add_trace(go.Bar(
+        #     x=agg_by_year['Year'],
+        #     y=agg_by_year['Final_Settled_Amount'],
+        #     name="Final Settled Amount",
+        #     marker_color='steelblue'
+        # ))
 
-        # Add line for Claim Count
-        fig_combined.add_trace(go.Scatter(
-            x=agg_by_year['Year'],
-            y=agg_by_year['Claim_Count'],
-            name="Claim Count",
-            mode='lines',
-            yaxis='y2',
-            line=dict(color='darkorange', width=3)
+        # # Add line for Claim Count
+        # fig_combined.add_trace(go.Scatter(
+        #     x=agg_by_year['Year'],
+        #     y=agg_by_year['Claim_Count'],
+        #     name="Claim Count",
+        #     mode='lines',
+        #     yaxis='y2',
+        #     line=dict(color='darkorange', width=3)
 
-        ))
+        # ))
 
-        # Layout with secondary y-axis
-        fig_combined.update_layout(
-            title="Stacked Amounts with Claim Count Line",
-            barmode='stack',
-            xaxis=dict(type='category', title='Year'),
-            yaxis=dict(title='Amount (£)', tickprefix='£', tickformat='.2s'),
-            yaxis2=dict(title='Claim Count', overlaying='y', side='right',dtick=100),
-            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
-        )
+        # # Layout with secondary y-axis
+        # fig_combined.update_layout(
+        #     title="Stacked Amounts with Claim Count Line",
+        #     barmode='stack',
+        #     xaxis=dict(type='category', title='Year'),
+        #     yaxis=dict(title='Amount (£)', tickprefix='£', tickformat='.2s'),
+        #     yaxis2=dict(title='Claim Count', overlaying='y', side='right',dtick=100),
+        #     legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+        # )
 
 
-        # Format axes
-        fig_combined.update_layout(xaxis=dict(tickformat="d"))
-        # fig_stacked_metrics.update_yaxes(tickprefix="£")
+        # # Format axes
+        # fig_combined.update_layout(xaxis=dict(tickformat="d"))
+        # # fig_stacked_metrics.update_yaxes(tickprefix="£")
 
-        st.plotly_chart(fig_combined, use_container_width=True)
+        # st.plotly_chart(fig_combined, use_container_width=True)
 
-        yoy_df = df.copy()
-        if 'Year' not in yoy_df.columns:
-            yoy_df['Year'] = pd.to_datetime(yoy_df.get('Claim_Date', pd.Series()), errors='coerce').dt.year
-        yoy_df = yoy_df.groupby(['Year', 'Emerging_Risk_Category']).agg({'Claim_ID': 'count'}).reset_index()
-        fig_yoy = px.bar(yoy_df, x='Year', y='Claim_ID', color='Emerging_Risk_Category',
-                         title='Year-on-Year Claim Count by Emerging Risk Category', barmode='group')
-        fig_yoy.update_yaxes(tickformat=".2s")
-        st.plotly_chart(fig_yoy, use_container_width=True)
+        # yoy_df = df.copy()
+        # if 'Year' not in yoy_df.columns:
+        #     yoy_df['Year'] = pd.to_datetime(yoy_df.get('Claim_Date', pd.Series()), errors='coerce').dt.year
+        # yoy_df = yoy_df.groupby(['Year', 'Emerging_Risk_Category']).agg({'Claim_ID': 'count'}).reset_index()
+        # fig_yoy = px.bar(yoy_df, x='Year', y='Claim_ID', color='Emerging_Risk_Category',
+        #                  title='Year-on-Year Claim Count by Emerging Risk Category', barmode='group')
+        # fig_yoy.update_yaxes(tickformat=".2s")
+        # st.plotly_chart(fig_yoy, use_container_width=True)
 
         # ✅ Sunburst Chart
         viz_df = df.copy()
@@ -478,6 +513,12 @@ with tabs[2]:
             st.plotly_chart(fig_sunburst, use_container_width=True)
         else:
             st.warning("No valid data available for Sunburst chart.")
+
+        # Treemap
+        treemap_df = viz_df.groupby(['Year', 'Emerging_Risk_Category']).agg({'Final_Settled_Amount': 'sum'}).reset_index()
+        fig_treemap = px.treemap(treemap_df, path=['Year', 'Emerging_Risk_Category'], values='Final_Settled_Amount',
+                                 title='Settled Amount by Risk Category and Year',labels={'Final_Settled_Amount':'Total Settled Amount (£)'})
+        st.plotly_chart(fig_treemap, use_container_width=True)
 
         # st.download_button("Download Category Aggregated Summary", category_agg.to_csv(index=False), "category_aggregated_summary.csv")
 
