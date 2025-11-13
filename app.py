@@ -393,7 +393,7 @@ with tab2:
 
         
         # Update axis titles for each subplot
-        fig.update_xaxes(tickformat=',d')
+        fig.update_xaxes(tickformat='d')
         fig.update_xaxes(title_text="Year", row=1, col=1)
         fig.update_yaxes(title_text="Number of Claims", row=1, col=1)
         fig.update_xaxes(title_text="Year", row=1, col=2)
@@ -508,7 +508,7 @@ with tab3:
                 legend=dict(x=1.05, y=1, orientation='v')
             )
             # Update axis titles
-            fig.update_xaxes(tickformat=',d')
+            fig.update_xaxes(tickformat='d')
             fig.update_xaxes(title_text="Year", row=1, col=1)
             fig.update_yaxes(title_text="Claim Count", row=1, col=1)
             fig.update_xaxes(title_text="Year", row=1, col=2)
