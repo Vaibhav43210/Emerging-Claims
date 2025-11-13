@@ -40,21 +40,43 @@ def human_count(n):
 # Load CSV and initialize session state
 # -------------------------------
 if "df" not in st.session_state:
-    st.session_state.df = pd.read_csv('emerging_claims_risk_20Krecords.csv')  # Replace with actual path
+    st.session_state.df = pd.read_excel('insurance_claims_dataset_updated.xlsx')  # Replace with actual path
 
 df = st.session_state.df
 
+##########Applying logic to reduce categories##########
+
+df = df[
+    ((df['LOB']=='Crime Insurance') & ((df['Risk_Category']=='Fraud') | (df['Risk_Category']=='Theft')))
+    # |
+    # ((df['LOB']=='Liability Insurance') & ((df['Risk_Category']=='Bodily Injury') | (df['Risk_Category']=='Legal Liability') | (df['Risk_Category']=='Negligence')))
+    |
+    ((df['LOB']=='Property') & ((df['Risk_Category']=='Fire') | (df['Risk_Category']=='Natural Disaster')))
+    |
+    ((df['LOB']=='Cyber Insurance') & ((df['Risk_Category']=='Data Breach') | (df['Risk_Category']=='Ransomware')))
+    |
+    ((df['LOB']=='Workers Compensation') & ((df['Risk_Category']=='Occupational Disease') | (df['Risk_Category']=='Injury')))
+    |
+    ((df['LOB']=='Professional Indemnity') & ((df['Risk_Category']=='Errors & Omissions') | (df['Risk_Category']=='Breach of Duty')))
+    |
+    (df['Risk_Category']=='War')
+    ]
+
+print(df['Risk_Category'].unique())
+print(df['Sub_Risk_Category'].unique())
 # Normalize columns
 df['LOB'] = df['LOB'].astype(str).str.strip()
 df['Risk_Category'] = df['Risk_Category'].astype(str).str.strip()
 
-df = df[df['Loss Year']!=2026]
+# df = df[df['Loss Year']!=2026]
 
 # -------------------------------
 # Sidebar Filters (Collapsible)
 # -------------------------------
 
 # --- Custom CSS for Sidebar ---
+st.set_page_config(layout="wide",initial_sidebar_state="collapsed")
+
 st.markdown("""
     <style>
         /* Make sidebar collapsible and adjust width */
@@ -99,20 +121,40 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Sidebar Filters ---
+
 st.sidebar.header("Global Filters")
 with st.sidebar.expander("Global Filters", expanded=False):
+    # Get unique options
     lob_options = sorted(df['LOB'].dropna().unique().tolist())
     risk_options = sorted(df['Risk_Category'].dropna().unique().tolist())
     year_options = sorted(df['Loss Year'].dropna().unique().tolist())
 
-    selected_lob = st.multiselect("Select Line of Business", lob_options, default=lob_options)
-    selected_risk = st.multiselect("Select Risk Category", risk_options, default=risk_options)
-    selected_year = st.multiselect("Select Loss Year", year_options, default=year_options)
+    # --- LOB Checkboxes ---
+    st.write("Select Line of Business:")
+    selected_lob = []
+    for lob in lob_options:
+        if st.checkbox(lob, value=True, key=f"lob_{lob}"):
+            selected_lob.append(lob)
 
+    # --- Risk Category Checkboxes ---
+    st.write("Select Risk Category:")
+    selected_risk = []
+    for risk in risk_options:
+        if st.checkbox(risk, value=True, key=f"risk_{risk}"):
+            selected_risk.append(risk)
 
-print('Preeti needs LOB',selected_lob)
-print('Preeti needs Risk',selected_risk)
-print('Preeti needs Years',selected_year)
+    # --- Loss Year Checkboxes ---
+    st.write("Select Loss Year:")
+    selected_year = []
+    for year in year_options:
+        if st.checkbox(str(year), value=True, key=f"year_{year}"):
+            selected_year.append(year)
+
+# Display selected filters
+print("Selected LOBs:", selected_lob)
+print("Selected Risks:", selected_risk)
+print("Selected Years:", selected_year)
+
 
 # Apply Filters
 filtered_df = df[
@@ -254,11 +296,11 @@ with tab2:
 
             # Highest claim growth category
             max_claim_row = period_data.sort_values('Claim_Growth', ascending=False).iloc[0]
-            bullet_claims.append(f"- {start_year}-{end_year}: {max_claim_row['Risk_Category']} ({growth_tag(max_claim_row['Claim_Growth'])})")
+            bullet_claims.append(f"{start_year}-{end_year}: {max_claim_row['Risk_Category']} ({growth_tag(max_claim_row['Claim_Growth'])})")
 
             # Highest net loss growth category
             max_loss_row = period_data.sort_values('Loss_Growth', ascending=False).iloc[0]
-            bullet_loss.append(f"- {start_year}-{end_year}: {max_loss_row['Risk_Category']} ({growth_tag(max_loss_row['Loss_Growth'])})")
+            bullet_loss.append(f"{start_year}-{end_year}: {max_loss_row['Risk_Category']} ({growth_tag(max_loss_row['Loss_Growth'])})")
 
         # Overall insights
         max_growth_category = yoy_summary.loc[yoy_summary['Claim_Growth'].idxmax(), 'Risk_Category']
@@ -279,19 +321,42 @@ with tab2:
     #     with col1:
 
     # Custom color palette for Risk Categories
+        
         color_map = {
-            'Injury/Illness': '#1f77b4',           # Blue
-            'Malicious Activity': '#ff7f0e',       # Orange
-            'Natural Disaster': '#d62728',         # Red
-            'Operational Error': '#9467bd',        # Purple
-            'Product/Service Failure': '#2ca02c'   # Green
+            'Bodily Injury': '#1f77b4',        # Blue
+            'Breach of Duty': '#ff7f0e',       # Orange
+            'Business Interruption': '#2ca02c',# Green
+            'Data Breach': '#d62728',          # Red
+            'Errors & Omissions': '#9467bd',   # Purple
+            'Fatality': '#8c564b',             # Brown
+            'Fire': '#e377c2',                 # Pink
+            'Forgery': '#7f7f7f',              # Gray
+            'Fraud': '#bcbd22',                # Olive
+            'Injury': '#17becf',               # Cyan
+            'Legal Liability': '#aec7e8',      # Light Blue
+            'Natural Disaster': '#ff9896',     # Light Red
+            'Negligence': '#c49c94',           # Beige
+            'Occupational Disease': '#f7b6d2', # Light Pink
+            'Property Damage': '#9edae5',      # Light Cyan
+            'Ransomware': '#c5b0d5',           # Lavender
+            'Theft': '#dbdb8d',                # Light Olive
+            'War': '#8dd3c7',                  # Teal
+            'Water Damage': '#ffffb3'          # Light Yellow
         }
+
+
+
+        
+# Dynamic color map for all Risk Categories
+        # unique_risks = yoy_summary['Risk_Category'].unique()
+        # color_palette = px.colors.qualitative.Set3
+        # color_map = {risk: color_palette[i % len(color_palette)] for i, risk in enumerate(unique_risks)}
 
     #        
         
         # Create subplots: 1 row, 2 columns
         fig = make_subplots(rows=1, cols=2, subplot_titles=("YOY Claim Count", "YOY Net Loss"),
-                            column_widths=[0.4, 0.6],horizontal_spacing=0.20)
+                            column_widths=[0.5, 0.5])
 
         # Add Claim Count traces
         for category in yoy_summary['Risk_Category'].unique():
@@ -314,18 +379,21 @@ with tab2:
             )
 
         
-        # Layout adjustments
+        
+    # Layout adjustments for alignment
         fig.update_layout(
             title_text="Year-over-Year Trends",
-            title_font=dict(size=18, color='darkblue'),
-            legend=dict(x=1.05, y=1, bordercolor="LightGray", borderwidth=1, font=dict(size=12)),
-            margin=dict(l=40, r=150, t=80, b=40),
-            # xaxis=dict(showgrid=True),
-            # yaxis=dict(showgrid=True),
-            height=500
-    )
+            title_x=0.0,
+            height=600,
+            margin=dict(t=80, b=80),
+            legend=dict(x=1.05, y=1, orientation='v'),
+            yaxis=dict(domain=[0, 1]),
+            yaxis2=dict(domain=[0, 1])
+        )
+
         
         # Update axis titles for each subplot
+        fig.update_xaxes(tickformat=',d')
         fig.update_xaxes(title_text="Year", row=1, col=1)
         fig.update_yaxes(title_text="Number of Claims", row=1, col=1)
         fig.update_xaxes(title_text="Year", row=1, col=2)
@@ -359,87 +427,94 @@ with tab2:
 
 # --- Third Tab ---
 
-
 with tab3:
-    st.header("Sub-Category Breakdown: Loss Ratio Trends")
+    st.header("Sub-Category Breakdown: Claim Count & Net Loss")
 
     if filtered_df.empty:
         st.warning("No data available for selected filters.")
-    else:
-        # Convert numeric columns
-        filtered_df['Insured_Value'] = pd.to_numeric(filtered_df['Insured_Value'], errors='coerce')
-        filtered_df['Net_Loss'] = pd.to_numeric(filtered_df['Net_Loss'], errors='coerce')
+        st.stop()
+    # -------------------------------
+    # Filters for Tab 3
+    # -------------------------------   
 
-        # Aggregate data
-        agg_df = filtered_df.groupby(['Risk_Category', 'Sub_Risk_Category', 'Loss Year']).agg({
-            'Net_Loss': 'sum',
-            'Insured_Value': 'sum'
-        }).reset_index()
+    else:   
+        # Create container with border and expander for filters
+        with st.container(border=True):
+            with st.expander("Select Options"):
+                # Risk Category selection
+                risk_categories = filtered_df['Risk_Category'].unique().tolist()
+                selected_risk = st.radio("Select Risk Category", options=risk_categories, index=0)
 
-        if agg_df.empty:
-            st.warning("No sub-category data available for selected filters.")
+                # Get subcategories for selected Risk Category
+                sub_categories = filtered_df[filtered_df['Risk_Category'] == selected_risk]['Sub_Risk_Category'].unique().tolist()
+
+                # Sub-Risk Category checkboxes (default all selected)
+                selected_subs = []
+                st.markdown("**Select Sub-Risk Categories:**")
+                for sub in sub_categories:
+                    if st.checkbox(sub, key=f"sub_{sub}", value=True):
+                        selected_subs.append(sub)
+
+        # Apply filters
+        filtered_tab3 = filtered_df[
+            (filtered_df['Risk_Category'] == selected_risk) &
+            (filtered_df['Sub_Risk_Category'].isin(selected_subs))
+        ]
+
+        if filtered_tab3.empty:
+            st.warning("No data available for selected filters.")
         else:
-            # Calculate Loss Ratio
-            agg_df['Loss_Ratio'] = agg_df['Net_Loss'] / agg_df['Insured_Value']
+            # Convert numeric columns
+            filtered_tab3['Insured_Value'] = pd.to_numeric(filtered_tab3['Insured_Value'], errors='coerce')
+            filtered_tab3['Net_Loss'] = pd.to_numeric(filtered_tab3['Net_Loss'], errors='coerce')
+
+            # Aggregate data for Claim Count and Net Loss
+            agg_df = filtered_tab3.groupby(['Sub_Risk_Category', 'Loss Year']).agg({
+                'Net_Loss': 'sum',
+                'Claim_ID': 'count'  # Assuming Claim_ID exists
+            }).reset_index().rename(columns={'Claim_ID': 'Claim_Count'})
 
             # Global color map for consistency
-            unique_subs = agg_df['Sub_Risk_Category'].unique()
             color_palette = px.colors.qualitative.Set2
-            sub_colors = {sub: color_palette[i % len(color_palette)] for i, sub in enumerate(unique_subs)}
+            sub_colors = {sub: color_palette[i % len(color_palette)] for i, sub in enumerate(selected_subs)}
 
-            # Loop through each Risk Category
-            for category in agg_df['Risk_Category'].unique():
-                cat_data = agg_df[agg_df['Risk_Category'] == category]
+            # Create subplot for Claim Count and Net Loss
+            fig = make_subplots(rows=1, cols=2, subplot_titles=("Claim Count", "Net Loss"))
 
-                # Sort subcategories by max Loss Ratio
-                avg_loss_ratio = cat_data.groupby('Sub_Risk_Category')['Loss_Ratio'].max().sort_values(ascending=False)
-                avg_loss_ratio_df = avg_loss_ratio.reset_index()
+            # Add Claim Count traces
+            for sub_cat in selected_subs:
+                sub_data = agg_df[agg_df['Sub_Risk_Category'] == sub_cat]
+                fig.add_trace(go.Scatter(
+                    x=sub_data['Loss Year'], y=sub_data['Claim_Count'],
+                    mode='lines+markers', name=sub_cat,
+                    line=dict(color=sub_colors[sub_cat])
+                ), row=1, col=1)
 
-                # Extract subcategories for this Risk Category
-                sub_categories = avg_loss_ratio_df['Sub_Risk_Category'].unique()
+            # Add Net Loss traces
+            for sub_cat in selected_subs:
+                sub_data = agg_df[agg_df['Sub_Risk_Category'] == sub_cat]
+                fig.add_trace(go.Scatter(
+                    x=sub_data['Loss Year'], y=sub_data['Net_Loss'],
+                    mode='lines+markers', showlegend=False,
+                    line=dict(color=sub_colors[sub_cat])
+                ), row=1, col=2)
 
-                # Create figure for Loss Ratio only
-                fig = go.Figure()
+            # Layout adjustments
+            fig.update_layout(
+                title_text=f"{selected_risk}: Claim Count & Net Loss by Sub-Category",
+                title_x=0.5,
+                height=500 + len(selected_subs)*50,
+                margin=dict(t=80, b=80),
+                legend=dict(x=1.05, y=1, orientation='v')
+            )
+            # Update axis titles
+            fig.update_xaxes(tickformat=',d')
+            fig.update_xaxes(title_text="Year", row=1, col=1)
+            fig.update_yaxes(title_text="Claim Count", row=1, col=1)
+            fig.update_xaxes(title_text="Year", row=1, col=2)
+            fig.update_yaxes(title_text="Net Loss Amount", row=1, col=2)
 
-                for sub_cat in sub_categories:
-                    sub_data = cat_data[cat_data['Sub_Risk_Category'] == sub_cat]
-                    fig.add_trace(go.Scatter(
-                        x=sub_data['Loss Year'], y=sub_data['Loss_Ratio'],
-                        mode='lines+markers', name=sub_cat,
-                        line=dict(color=sub_colors[sub_cat])
-                    ))
-
-                # Layout adjustments
-                fig.update_layout(
-                    title_text=f"{category}: Loss Ratio by Sub-Category",
-                    title_x=0.5,  # Center align title
-                    height=400 + len(sub_categories)*50,  # Dynamic height
-                    margin=dict(t=80, b=80),
-                    legend=dict(x=1.05, y=1, orientation='v')  # Right aligned legend
-                )
-
-                fig.update_xaxes(title_text="Year")
-                fig.update_yaxes(title_text="Loss Ratio")
-
-                # Display chart
-                st.plotly_chart(fig, use_container_width=True)
-
-                # --- Insights Section ---
-                st.markdown(f"### Insights for {category}")
-                top_loss_ratio_subs = avg_loss_ratio.head(2)
-                for sub, val in top_loss_ratio_subs.items():
-                    st.markdown(f"- **{sub}**: Max Loss Ratio {val:.2f}")
-
-                # --- Actionable Recommendations ---
-                st.markdown(f"### Actionable Recommendations for {category}")
-                for sub_cat in top_loss_ratio_subs.index:
-                    lr = avg_loss_ratio[sub_cat]
-                    if lr >= 0.20:
-                        st.markdown(f"- **{sub_cat}**: <span style='color:red;font-weight:bold;'>High Risk</span> → Stricter underwriting and risk mitigation.", unsafe_allow_html=True)
-                    elif 0.15 <= lr < 0.20:
-                        st.markdown(f"- **{sub_cat}**: <span style='color:orange;font-weight:bold;'>Moderate Risk</span> → Review pricing and coverage terms.", unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"- **{sub_cat}**: <span style='color:green;font-weight:bold;'>Low Risk</span> → Maintain current strategy, monitor trends.", unsafe_allow_html=True)
-
+            # Display chart
+            st.plotly_chart(fig, use_container_width=True)
 
 
